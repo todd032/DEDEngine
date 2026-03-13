@@ -81,6 +81,7 @@ struct SimulationState
     std::vector<SceneObject> sceneObjects;
     std::vector<ButtonState> buttons;
     std::vector<std::string> hudLines;
+    std::string versionLabel;
     int cookieCount = 0;
     std::uint32_t seed = 1337u;
 };

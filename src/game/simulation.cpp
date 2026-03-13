@@ -156,12 +156,27 @@ CookiePlacement CreateCookiePlacement(
     float height,
     const Color& color)
 {
+    const auto yAxis = Normalize(sample.normal);
+    auto xAxis = tangentX - (yAxis * Dot(tangentX, yAxis));
+    if (LengthSquared(xAxis) <= 1.0e-6f)
+    {
+        xAxis = ProjectedAxis(yAxis, {1.0f, 0.0f, 0.0f});
+    }
+    xAxis = Normalize(xAxis);
+
+    auto zAxis = Normalize(Cross(xAxis, yAxis));
+    if (Dot(zAxis, tangentZ) < 0.0f)
+    {
+        zAxis = zAxis * -1.0f;
+        xAxis = xAxis * -1.0f;
+    }
+
     const auto center = sample.point + (sample.normal * ((height * 0.5f) + 0.02f));
     return {
         center,
-        Normalize(tangentX),
-        Normalize(sample.normal),
-        Normalize(tangentZ),
+        xAxis,
+        yAxis,
+        zAxis,
         width,
         depth,
         height,
@@ -585,6 +600,7 @@ void Simulation::RefreshHud()
     }
     state_.hudLines.push_back("PITCH  " + FormatFixed(ToDegrees(state_.camera.pitch), 0) + " DEG");
     state_.hudLines.push_back("ZOOM  " + FormatFixed(state_.camera.distance, 1) + "M");
+    state_.versionLabel = "VER  2026_03_13_1";
 }
 
 std::vector<CookiePlacement> Simulation::CreateCookiePlacements(const RoofDefinition& roof)
@@ -615,7 +631,7 @@ std::vector<CookiePlacement> Simulation::CreateSurfaceCookiePlacements(const Roo
             const auto depth = depths[zIndex];
             const auto sample = roof.Sample(xCenters[xIndex], zCenters[zIndex]);
             const auto tangentX = ProjectedAxis(sample.normal, {1.0f, 0.0f, 0.0f});
-            const auto tangentZ = Normalize(Cross(sample.normal, tangentX));
+            const auto tangentZ = Normalize(Cross(tangentX, sample.normal));
             const auto height = NextRange(random_, state_.cookieSpec.minHeight, state_.cookieSpec.maxHeight);
             const auto color = CookiePalette[static_cast<std::size_t>(NextIndex(random_, static_cast<int>(CookiePalette.size())))];
             placements.push_back(CreateCookiePlacement(sample, tangentX, tangentZ, width, depth, height, color));

@@ -61,6 +61,7 @@ Glyph GetGlyph(char character)
     case ':': return {{0x00, 0x04, 0x04, 0x00, 0x04, 0x04, 0x00}};
     case '.': return {{0x00, 0x00, 0x00, 0x00, 0x00, 0x06, 0x06}};
     case '-': return {{0x00, 0x00, 0x00, 0x1F, 0x00, 0x00, 0x00}};
+    case '_': return {{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1F}};
     default: return {{0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}};
     }
 }
@@ -484,7 +485,16 @@ void Renderer::BuildUiVertices(const SimulationState& state, int width, int heig
     }
 
     const auto footer = std::string("COOKIE ON THE ROOF X");
-    AppendText(vertices, 20.0f, static_cast<float>(height) - 28.0f, 2.0f, footer, hudText);
+    const auto footerY = static_cast<float>(height) - 28.0f;
+    AppendText(vertices, 20.0f, footerY, 2.0f, footer, hudText);
+
+    if (!state.versionLabel.empty())
+    {
+        constexpr float versionScale = 2.0f;
+        const auto versionWidth = static_cast<float>(state.versionLabel.size()) * versionScale * 6.0f;
+        const auto versionX = static_cast<float>(width) - 20.0f - versionWidth;
+        AppendText(vertices, versionX, footerY, versionScale, state.versionLabel, hudText);
+    }
 }
 
 void Renderer::AppendRect(std::vector<UiVertex>& vertices, float x, float y, float width, float height, const Color& color) const
