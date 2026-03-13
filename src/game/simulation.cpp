@@ -600,6 +600,7 @@ void Simulation::RefreshHud()
     }
     state_.hudLines.push_back("PITCH  " + FormatFixed(ToDegrees(state_.camera.pitch), 0) + " DEG");
     state_.hudLines.push_back("ZOOM  " + FormatFixed(state_.camera.distance, 1) + "M");
+    state_.hudLines.push_back("VER  2026_03_13_1");
 }
 
 std::vector<CookiePlacement> Simulation::CreateCookiePlacements(const RoofDefinition& roof)

@@ -91,14 +91,22 @@ MeshData CreateBox(const Vec3& center, float width, float height, float depth, c
 
 MeshData CreateOrientedBox(const Vec3& center, const Vec3& halfX, const Vec3& halfY, const Vec3& halfZ, const Color& color)
 {
-    const auto leftBottomBack = center - halfX - halfY - halfZ;
-    const auto leftBottomFront = center - halfX - halfY + halfZ;
-    const auto leftTopBack = center - halfX + halfY - halfZ;
-    const auto leftTopFront = center - halfX + halfY + halfZ;
-    const auto rightBottomBack = center + halfX - halfY - halfZ;
-    const auto rightBottomFront = center + halfX - halfY + halfZ;
-    const auto rightTopBack = center + halfX + halfY - halfZ;
-    const auto rightTopFront = center + halfX + halfY + halfZ;
+    auto correctedHalfX = halfX;
+    auto correctedHalfY = halfY;
+    auto correctedHalfZ = halfZ;
+    if (Dot(Cross(correctedHalfX, correctedHalfY), correctedHalfZ) < 0.0f)
+    {
+        correctedHalfZ = correctedHalfZ * -1.0f;
+    }
+
+    const auto leftBottomBack = center - correctedHalfX - correctedHalfY - correctedHalfZ;
+    const auto leftBottomFront = center - correctedHalfX - correctedHalfY + correctedHalfZ;
+    const auto leftTopBack = center - correctedHalfX + correctedHalfY - correctedHalfZ;
+    const auto leftTopFront = center - correctedHalfX + correctedHalfY + correctedHalfZ;
+    const auto rightBottomBack = center + correctedHalfX - correctedHalfY - correctedHalfZ;
+    const auto rightBottomFront = center + correctedHalfX - correctedHalfY + correctedHalfZ;
+    const auto rightTopBack = center + correctedHalfX + correctedHalfY - correctedHalfZ;
+    const auto rightTopFront = center + correctedHalfX + correctedHalfY + correctedHalfZ;
 
     MeshData mesh{};
     AddQuad(mesh, leftBottomFront, rightBottomFront, rightTopFront, leftTopFront, color);
