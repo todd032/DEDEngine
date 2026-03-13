@@ -1,0 +1,9 @@
+build/
+.external-cache/
+android/.gradle/
+android/local.properties
+android/app/build/
+*.VC.db
+*.opendb
+*.user
+*.suo

@@ -1,0 +1,136 @@
+cmake_minimum_required(VERSION 3.24)
+
+project(CookieOnTheRoofX VERSION 0.1.0 LANGUAGES C CXX)
+
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+option(COTRX_BUILD_TESTS "Build simulation tests." ON)
+
+if(NOT EMSCRIPTEN)
+    set(COTRX_SDL_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/third_party/SDL2")
+    if(NOT EXISTS "${COTRX_SDL_ROOT}/CMakeLists.txt")
+        message(FATAL_ERROR "Expected SDL2 source tree at ${COTRX_SDL_ROOT}")
+    endif()
+
+    set(SDL_TEST OFF CACHE BOOL "" FORCE)
+    set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
+    set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+    set(SDL_STATIC ON CACHE BOOL "" FORCE)
+    set(SDL_STATIC_PIC ON CACHE BOOL "" FORCE)
+    set(SDL2_DISABLE_INSTALL ON CACHE BOOL "" FORCE)
+
+    add_subdirectory("${COTRX_SDL_ROOT}" EXCLUDE_FROM_ALL)
+
+    function(cotrx_pick_target out_var)
+        foreach(candidate IN LISTS ARGN)
+            if(TARGET "${candidate}")
+                set(${out_var} "${candidate}" PARENT_SCOPE)
+                return()
+            endif()
+        endforeach()
+
+        message(FATAL_ERROR "Unable to find any target from: ${ARGN}")
+    endfunction()
+
+    cotrx_pick_target(COTRX_SDL_TARGET
+        SDL2::SDL2-static
+        SDL2::SDL2
+        SDL2-static
+        SDL2)
+
+    cotrx_pick_target(COTRX_SDL_MAIN_TARGET
+        SDL2::SDL2main
+        SDL2main)
+endif()
+
+set(COTRX_COMMON_SOURCES
+    src/engine/types.hpp
+    src/engine/geometry.hpp
+    src/engine/geometry.cpp
+    src/engine/gl_api.hpp
+    src/engine/gl_api.cpp
+    src/engine/renderer.hpp
+    src/engine/renderer.cpp
+    src/game/simulation.hpp
+    src/game/simulation.cpp
+    src/platform/shared/platform_config.hpp)
+
+add_library(cotrx_core STATIC
+    ${COTRX_COMMON_SOURCES})
+
+target_include_directories(cotrx_core
+    PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/src")
+
+target_compile_definitions(cotrx_core
+    PRIVATE
+        $<$<PLATFORM_ID:Windows>:NOMINMAX>
+        $<$<PLATFORM_ID:Windows>:WIN32_LEAN_AND_MEAN>)
+
+if(EMSCRIPTEN)
+    target_compile_options(cotrx_core PUBLIC "SHELL:-sUSE_SDL=2")
+    target_link_options(cotrx_core INTERFACE "SHELL:-sUSE_SDL=2")
+elseif(WIN32)
+    target_link_libraries(cotrx_core PUBLIC ${COTRX_SDL_TARGET} opengl32)
+elseif(ANDROID)
+    target_link_libraries(cotrx_core PUBLIC ${COTRX_SDL_TARGET} log android EGL GLESv3)
+endif()
+
+if(EMSCRIPTEN)
+    add_library(cotrx_platform STATIC
+        src/platform/web/platform_config.cpp)
+elseif(WIN32)
+    add_library(cotrx_platform STATIC
+        src/platform/windows/platform_config.cpp)
+elseif(ANDROID)
+    add_library(cotrx_platform STATIC
+        src/platform/android/platform_config.cpp)
+endif()
+
+target_link_libraries(cotrx_platform PUBLIC cotrx_core)
+
+set(COTRX_ENTRY_SOURCE src/platform/shared/sdl_main.cpp)
+
+if(ANDROID)
+    add_library(main SHARED ${COTRX_ENTRY_SOURCE})
+    target_link_libraries(main PRIVATE cotrx_platform)
+elseif(EMSCRIPTEN)
+    file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/site")
+    configure_file("${CMAKE_CURRENT_SOURCE_DIR}/web/.nojekyll" "${CMAKE_BINARY_DIR}/site/.nojekyll" COPYONLY)
+
+    add_executable(CookieOnTheRoofX ${COTRX_ENTRY_SOURCE})
+    set_target_properties(CookieOnTheRoofX PROPERTIES
+        OUTPUT_NAME "index"
+        SUFFIX ".html"
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/site")
+
+    target_link_libraries(CookieOnTheRoofX PRIVATE cotrx_platform)
+    target_link_options(CookieOnTheRoofX PRIVATE
+        "SHELL:-sUSE_SDL=2"
+        "SHELL:-sWASM=1"
+        "SHELL:-sALLOW_MEMORY_GROWTH=1"
+        "SHELL:-sMIN_WEBGL_VERSION=2"
+        "SHELL:-sMAX_WEBGL_VERSION=2"
+        "SHELL:-sFULL_ES3=1"
+        "SHELL:-sENVIRONMENT=web"
+        "SHELL:--shell-file ${CMAKE_CURRENT_SOURCE_DIR}/web/shell.html")
+else()
+    add_executable(CookieOnTheRoofX WIN32 ${COTRX_ENTRY_SOURCE})
+    set_target_properties(CookieOnTheRoofX PROPERTIES OUTPUT_NAME "Cookie On The Roof X")
+    target_link_libraries(CookieOnTheRoofX PRIVATE cotrx_platform ${COTRX_SDL_MAIN_TARGET})
+endif()
+
+if(COTRX_BUILD_TESTS AND NOT ANDROID AND NOT EMSCRIPTEN)
+    include(CTest)
+    enable_testing()
+
+    add_executable(cotrx_simulation_tests
+        tests/simulation_tests.cpp)
+
+    target_link_libraries(cotrx_simulation_tests PRIVATE cotrx_core)
+
+    add_test(NAME cotrx_simulation_tests COMMAND cotrx_simulation_tests)
+endif()
