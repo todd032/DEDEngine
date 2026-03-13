@@ -100,12 +100,14 @@ if(ANDROID)
 elseif(EMSCRIPTEN)
     file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/site")
     configure_file("${CMAKE_CURRENT_SOURCE_DIR}/web/.nojekyll" "${CMAKE_BINARY_DIR}/site/.nojekyll" COPYONLY)
+    set(COTRX_WEB_SHELL "${CMAKE_CURRENT_SOURCE_DIR}/web/shell.html")
 
     add_executable(CookieOnTheRoofX ${COTRX_ENTRY_SOURCE})
     set_target_properties(CookieOnTheRoofX PROPERTIES
         OUTPUT_NAME "index"
         SUFFIX ".html"
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/site")
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/site"
+        LINK_DEPENDS "${COTRX_WEB_SHELL}")
 
     target_link_libraries(CookieOnTheRoofX PRIVATE cotrx_platform)
     target_link_options(CookieOnTheRoofX PRIVATE
@@ -116,7 +118,7 @@ elseif(EMSCRIPTEN)
         "SHELL:-sMAX_WEBGL_VERSION=2"
         "SHELL:-sFULL_ES3=1"
         "SHELL:-sENVIRONMENT=web"
-        "SHELL:--shell-file ${CMAKE_CURRENT_SOURCE_DIR}/web/shell.html")
+        "SHELL:--shell-file ${COTRX_WEB_SHELL}")
 else()
     add_executable(CookieOnTheRoofX WIN32 ${COTRX_ENTRY_SOURCE})
     set_target_properties(CookieOnTheRoofX PROPERTIES OUTPUT_NAME "Cookie On The Roof X")

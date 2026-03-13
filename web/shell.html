@@ -37,8 +37,9 @@
 
     main {
       flex: 1;
+      width: min(1180px, 100%);
+      margin: 0 auto;
       display: grid;
-      grid-template-rows: auto 1fr auto;
       gap: 14px;
       padding: 18px;
     }
@@ -57,6 +58,15 @@
       display: grid;
       gap: 10px;
       padding: 18px 20px;
+    }
+
+    .hero,
+    .status-bar,
+    .console,
+    .footer,
+    .viewport {
+      width: min(100%, 1040px);
+      margin: 0 auto;
     }
 
     .eyebrow {
@@ -87,7 +97,7 @@
 
     .viewport {
       position: relative;
-      min-height: 0;
+      aspect-ratio: 1360 / 820;
       display: grid;
       grid-template-columns: minmax(0, 1fr);
       border-radius: 28px;
@@ -180,7 +190,7 @@
       }
 
       .viewport {
-        min-height: 48vh;
+        width: 100%;
       }
     }
   </style>
