@@ -56,7 +56,35 @@ set(COTRX_COMMON_SOURCES
     src/engine/renderer.cpp
     src/game/simulation.hpp
     src/game/simulation.cpp
-    src/platform/shared/platform_config.hpp)
+    src/platform/shared/platform_config.hpp
+    src/core/surface_types.hpp
+    src/core/surface_types.cpp
+    src/core/mesh_types.hpp
+    src/core/mesh_types.cpp
+    src/core/fragment_mesh.hpp
+    src/core/fragment_mesh.cpp
+    src/core/plane_math.hpp
+    src/core/plane_math.cpp
+    src/core/slice_intersections.hpp
+    src/core/slice_intersections.cpp
+    src/core/contour_builder.hpp
+    src/core/contour_builder.cpp
+    src/core/region_builder.hpp
+    src/core/region_builder.cpp
+    src/core/triangulation.hpp
+    src/core/triangulation.cpp
+    src/core/fragment_rebuild.hpp
+    src/core/fragment_rebuild.cpp
+    src/core/procedural_cube_generator.hpp
+    src/core/procedural_cube_generator.cpp
+    src/validation/scenario_runner.hpp
+    src/validation/scenario_runner.cpp
+    src/viewer/main.hpp
+    src/viewer/main.cpp
+    src/viewer/debug_draw.hpp
+    src/viewer/debug_draw.cpp
+    src/viewer/imgui_panels.hpp
+    src/viewer/imgui_panels.cpp)
 
 add_library(cotrx_core STATIC
     ${COTRX_COMMON_SOURCES})
