@@ -22,6 +22,7 @@ The old WPF `Cookie On The Roof` project remains only as a behavior reference.
 - `tests`: headless simulation checks for geometry and placement rules
 - `tools`: local build and toolchain helper scripts
 - `web`: custom Emscripten shell and Pages support files
+- `prototypes`: isolated folders for fully separate experiments (kept independent from the main product)
 - `codex/cloud`: Codex Cloud setup and maintenance scripts for the web-build trial
 - `android`: Android Studio project for debug APK builds
 - `third_party/SDL2`: vendored SDL2 source tree used by Windows and Android builds
