@@ -163,4 +163,11 @@ if(COTRX_BUILD_TESTS AND NOT ANDROID AND NOT EMSCRIPTEN)
     target_link_libraries(cotrx_simulation_tests PRIVATE cotrx_core)
 
     add_test(NAME cotrx_simulation_tests COMMAND cotrx_simulation_tests)
+
+    add_executable(cotrx_mesh_slicing_validation_tests
+        tests/mesh_slicing_validation_tests.cpp)
+
+    target_link_libraries(cotrx_mesh_slicing_validation_tests PRIVATE cotrx_core)
+
+    add_test(NAME cotrx_mesh_slicing_validation_tests COMMAND cotrx_mesh_slicing_validation_tests)
 endif()
