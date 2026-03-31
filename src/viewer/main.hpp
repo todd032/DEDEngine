@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "core/mesh_types.hpp"
+#include "engine/types.hpp"
 
 namespace cotrx::viewer
 {
@@ -64,10 +65,19 @@ struct ViewerState
     std::size_t selectedFragmentIndex = 0;
     std::vector<FragmentStats> stats;
 
+    std::size_t lastSceneMeshCount = 0;
+    std::size_t lastSceneTriangleCount = 0;
+    std::size_t overlayDrawCallCount = 0;
+    std::size_t overlayPrimitiveCount = 0;
+
     bool running = false;
     bool requestedExportObj = false;
     bool requestedExportJson = false;
 };
+
+[[nodiscard]] std::vector<MeshData> BuildSceneMeshesFromFragments(
+    const std::vector<core::Fragment>& fragments,
+    SurfaceColorMode colorMode);
 
 class ViewerApp
 {
