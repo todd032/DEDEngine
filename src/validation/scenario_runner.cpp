@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <limits>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -43,6 +44,27 @@ struct FragmentStats
     std::unordered_map<core::SurfaceType, SurfaceStats> surfaceStats;
 };
 
+struct PlaneFragmentSectionStats
+{
+    std::uint32_t fragmentId = 0;
+    std::uint32_t nearTriangleCount = 0;
+    float nearArea = 0.0f;
+    std::uint32_t mixedComponents = 0;
+    bool hasConnectedCutSurfaceAndCutCap = false;
+    std::unordered_map<core::SurfaceType, SurfaceStats> surfaceStats;
+};
+
+struct PlaneSectionStats
+{
+    std::uint32_t stepIndex = 0;
+    core::Plane plane{};
+    std::uint32_t nearTriangleCount = 0;
+    float nearArea = 0.0f;
+    std::uint32_t mixedComponentFragments = 0;
+    std::unordered_map<core::SurfaceType, SurfaceStats> surfaceStats;
+    std::vector<PlaneFragmentSectionStats> fragmentStats;
+};
+
 struct AssertionResult
 {
     std::string name;
@@ -55,6 +77,7 @@ struct ScenarioData
     std::string scenarioName;
     std::string scenarioDirName;
     std::vector<core::Fragment> fragments;
+    std::vector<PlaneSectionStats> stepSectionStats;
     std::vector<AssertionResult> assertions;
     std::optional<std::string> screenshotPath;
 };
@@ -81,6 +104,11 @@ float TriangleArea(const Vec3& a, const Vec3& b, const Vec3& c)
     const auto ab = b - a;
     const auto ac = c - a;
     return 0.5f * Length(Cross(ab, ac));
+}
+
+Vec3 TriangleCentroid(const Vec3& a, const Vec3& b, const Vec3& c)
+{
+    return {(a.x + b.x + c.x) / 3.0f, (a.y + b.y + c.y) / 3.0f, (a.z + b.z + c.z) / 3.0f};
 }
 
 std::vector<core::TriangleView> BuildTriangleViews(const core::Fragment& fragment)
@@ -243,6 +271,169 @@ std::vector<FragmentStats> BuildFragmentStats(const std::vector<core::Fragment>&
     return fragmentStats;
 }
 
+PlaneSectionStats BuildPlaneSectionStats(
+    const std::vector<core::Fragment>& fragments,
+    const core::Plane& plane,
+    const core::SliceEpsilon& epsilon,
+    const std::uint32_t stepIndex)
+{
+    struct LocalTriangle
+    {
+        std::uint32_t ia = 0;
+        std::uint32_t ib = 0;
+        std::uint32_t ic = 0;
+        core::SurfaceType surfaceType = core::SurfaceType::OuterSurface;
+        float area = 0.0f;
+    };
+
+    constexpr float kSectionDistanceFloor = 1.0e-4f;
+    const auto sectionDistance = std::max(kSectionDistanceFloor, epsilon.distance * 8.0f);
+
+    PlaneSectionStats section{};
+    section.stepIndex = stepIndex;
+    section.plane = plane;
+
+    for (const auto& fragment : fragments)
+    {
+        PlaneFragmentSectionStats fragmentSection{};
+        fragmentSection.fragmentId = fragment.id;
+        std::vector<LocalTriangle> nearTriangles;
+        nearTriangles.reserve(fragment.indices.size() / 3);
+
+        for (std::size_t i = 0, triangleId = 0; i + 2 < fragment.indices.size(); i += 3, ++triangleId)
+        {
+            const auto ia = static_cast<std::size_t>(fragment.indices[i + 0]);
+            const auto ib = static_cast<std::size_t>(fragment.indices[i + 1]);
+            const auto ic = static_cast<std::size_t>(fragment.indices[i + 2]);
+            if (ia >= fragment.vertices.size() || ib >= fragment.vertices.size() || ic >= fragment.vertices.size())
+            {
+                continue;
+            }
+
+            const auto& a = fragment.vertices[ia];
+            const auto& b = fragment.vertices[ib];
+            const auto& c = fragment.vertices[ic];
+            const auto centroid = TriangleCentroid(a, b, c);
+            if (std::abs(core::SignedDistanceToPlane(plane, centroid)) > sectionDistance)
+            {
+                continue;
+            }
+
+            const auto surfaceType = triangleId < fragment.triangleSurfaceTags.size()
+                ? fragment.triangleSurfaceTags[triangleId]
+                : core::SurfaceType::OuterSurface;
+            const auto area = TriangleArea(a, b, c);
+
+            nearTriangles.push_back({
+                static_cast<std::uint32_t>(fragment.indices[i + 0]),
+                static_cast<std::uint32_t>(fragment.indices[i + 1]),
+                static_cast<std::uint32_t>(fragment.indices[i + 2]),
+                surfaceType,
+                area});
+
+            fragmentSection.nearTriangleCount += 1u;
+            fragmentSection.nearArea += area;
+            auto& localSurface = fragmentSection.surfaceStats[surfaceType];
+            localSurface.triangleCount += 1u;
+            localSurface.area += area;
+        }
+
+        if (!nearTriangles.empty())
+        {
+            std::unordered_map<std::uint64_t, std::vector<std::size_t>> edgeToTriangles;
+            for (std::size_t triIndex = 0; triIndex < nearTriangles.size(); ++triIndex)
+            {
+                const auto& t = nearTriangles[triIndex];
+                const auto addEdge = [&edgeToTriangles, triIndex](const std::uint32_t v0, const std::uint32_t v1)
+                {
+                    const auto lo = std::min(v0, v1);
+                    const auto hi = std::max(v0, v1);
+                    const auto key = (static_cast<std::uint64_t>(lo) << 32u) | static_cast<std::uint64_t>(hi);
+                    edgeToTriangles[key].push_back(triIndex);
+                };
+
+                addEdge(t.ia, t.ib);
+                addEdge(t.ib, t.ic);
+                addEdge(t.ic, t.ia);
+            }
+
+            std::vector<std::vector<std::size_t>> adjacency(nearTriangles.size());
+            for (const auto& [_, triList] : edgeToTriangles)
+            {
+                for (std::size_t i = 0; i < triList.size(); ++i)
+                {
+                    for (std::size_t j = i + 1; j < triList.size(); ++j)
+                    {
+                        adjacency[triList[i]].push_back(triList[j]);
+                        adjacency[triList[j]].push_back(triList[i]);
+                    }
+                }
+            }
+
+            std::vector<bool> visited(nearTriangles.size(), false);
+            for (std::size_t triIndex = 0; triIndex < nearTriangles.size(); ++triIndex)
+            {
+                if (visited[triIndex])
+                {
+                    continue;
+                }
+
+                std::vector<std::size_t> stack{triIndex};
+                visited[triIndex] = true;
+                float cutSurfaceArea = 0.0f;
+                float cutCapArea = 0.0f;
+
+                while (!stack.empty())
+                {
+                    const auto current = stack.back();
+                    stack.pop_back();
+
+                    const auto& triangle = nearTriangles[current];
+                    if (triangle.surfaceType == core::SurfaceType::CutSurface)
+                    {
+                        cutSurfaceArea += triangle.area;
+                    }
+                    else if (triangle.surfaceType == core::SurfaceType::CutCap)
+                    {
+                        cutCapArea += triangle.area;
+                    }
+
+                    for (const auto neighbor : adjacency[current])
+                    {
+                        if (!visited[neighbor])
+                        {
+                            visited[neighbor] = true;
+                            stack.push_back(neighbor);
+                        }
+                    }
+                }
+
+                if (cutSurfaceArea > kAreaEpsilon && cutCapArea > kAreaEpsilon)
+                {
+                    fragmentSection.mixedComponents += 1u;
+                    fragmentSection.hasConnectedCutSurfaceAndCutCap = true;
+                }
+            }
+        }
+
+        if (fragmentSection.nearTriangleCount > 0u)
+        {
+            section.nearTriangleCount += fragmentSection.nearTriangleCount;
+            section.nearArea += fragmentSection.nearArea;
+            section.mixedComponentFragments += fragmentSection.hasConnectedCutSurfaceAndCutCap ? 1u : 0u;
+            for (const auto& [surfaceType, stat] : fragmentSection.surfaceStats)
+            {
+                auto& aggregateSurface = section.surfaceStats[surfaceType];
+                aggregateSurface.triangleCount += stat.triangleCount;
+                aggregateSurface.area += stat.area;
+            }
+            section.fragmentStats.push_back(std::move(fragmentSection));
+        }
+    }
+
+    return section;
+}
+
 float AreaForSurfaceType(
     const std::unordered_map<core::SurfaceType, SurfaceStats>& surfaceStats,
     const core::SurfaceType surfaceType)
@@ -286,6 +477,57 @@ std::string SurfaceStatsJson(const std::unordered_map<core::SurfaceType, Surface
     }
 
     output << pad << '}';
+    return output.str();
+}
+
+std::string PlaneSectionStatsJson(const std::vector<PlaneSectionStats>& stats, const int indent)
+{
+    std::ostringstream output;
+    const std::string pad(indent, ' ');
+    output << pad << "[\n";
+
+    for (std::size_t i = 0; i < stats.size(); ++i)
+    {
+        const auto& step = stats[i];
+        output << pad << "  {\n";
+        output << pad << "    \"step\": " << step.stepIndex << ",\n";
+        output << pad << "    \"plane\": {\"normal\": ["
+               << std::fixed << std::setprecision(6)
+               << step.plane.normal.x << ", " << step.plane.normal.y << ", " << step.plane.normal.z
+               << "], \"distance\": " << step.plane.distance << "},\n";
+        output << pad << "    \"nearTriangleCount\": " << step.nearTriangleCount << ",\n";
+        output << pad << "    \"nearArea\": " << std::fixed << std::setprecision(6) << step.nearArea << ",\n";
+        output << pad << "    \"mixedComponentFragments\": " << step.mixedComponentFragments << ",\n";
+        output << pad << "    \"surfaceTypeStats\": " << SurfaceStatsJson(step.surfaceStats, indent + 4) << ",\n";
+        output << pad << "    \"fragments\": [\n";
+        for (std::size_t f = 0; f < step.fragmentStats.size(); ++f)
+        {
+            const auto& fragment = step.fragmentStats[f];
+            output << pad << "      {\n";
+            output << pad << "        \"id\": " << fragment.fragmentId << ",\n";
+            output << pad << "        \"nearTriangleCount\": " << fragment.nearTriangleCount << ",\n";
+            output << pad << "        \"nearArea\": " << std::fixed << std::setprecision(6) << fragment.nearArea << ",\n";
+            output << pad << "        \"mixedComponents\": " << fragment.mixedComponents << ",\n";
+            output << pad << "        \"hasConnectedCutSurfaceAndCutCap\": "
+                   << (fragment.hasConnectedCutSurfaceAndCutCap ? "true" : "false") << ",\n";
+            output << pad << "        \"surfaceTypeStats\": " << SurfaceStatsJson(fragment.surfaceStats, indent + 8) << "\n";
+            output << pad << "      }";
+            if (f + 1 < step.fragmentStats.size())
+            {
+                output << ',';
+            }
+            output << "\n";
+        }
+        output << pad << "    ]\n";
+        output << pad << "  }";
+        if (i + 1 < stats.size())
+        {
+            output << ',';
+        }
+        output << "\n";
+    }
+
+    output << pad << "]";
     return output.str();
 }
 
@@ -362,6 +604,7 @@ ScenarioExecutionResult PersistScenarioArtifacts(const ScenarioData& data, const
         }
         json << "  \"fragmentCount\": " << data.fragments.size() << ",\n";
         json << "  \"surfaceTypeStats\": " << SurfaceStatsJson(aggregated, 2) << ",\n";
+        json << "  \"stepSectionStats\": " << PlaneSectionStatsJson(data.stepSectionStats, 2) << ",\n";
         json << "  \"fragments\": [\n";
 
         for (std::size_t i = 0; i < fragmentStats.size(); ++i)
@@ -515,20 +758,38 @@ ScenarioExecutionResult RunScenarioB(const ScenarioExecutionOptions& options)
     const auto scenario = BuildCutPlaneScenario(CutPlanePreset::VerticalHalfCut, options.generatorConfig);
 
     fragments = ApplyPlaneCuts(fragments, scenario.planes.front(), epsilon);
+    const auto stepSectionStats = std::vector<PlaneSectionStats>{
+        BuildPlaneSectionStats(fragments, scenario.planes.front(), epsilon, 0u)};
 
     const auto aggregated = BuildAggregatedSurfaceStats(fragments);
     const auto cutSurfaceArea = AreaForSurfaceType(aggregated, core::SurfaceType::CutSurface);
     const auto cutCapArea = AreaForSurfaceType(aggregated, core::SurfaceType::CutCap);
+    const auto sectionCutSurfaceArea = AreaForSurfaceType(stepSectionStats.front().surfaceStats, core::SurfaceType::CutSurface);
+    const auto sectionCutCapArea = AreaForSurfaceType(stepSectionStats.front().surfaceStats, core::SurfaceType::CutCap);
+    const auto sectionCutBoundaryArea = sectionCutSurfaceArea + sectionCutCapArea;
+    const auto sectionCutSurfaceRatio = sectionCutBoundaryArea > kAreaEpsilon ? (sectionCutSurfaceArea / sectionCutBoundaryArea) : 0.0f;
+    const auto sectionCutCapRatio = sectionCutBoundaryArea > kAreaEpsilon ? (sectionCutCapArea / sectionCutBoundaryArea) : 0.0f;
+    const auto cutBoundaryQualityPass =
+        (sectionCutSurfaceArea > kAreaEpsilon) && (sectionCutCapArea > kAreaEpsilon) &&
+        (sectionCutSurfaceRatio >= 0.05f) && (sectionCutCapRatio >= 0.05f) &&
+        (stepSectionStats.front().mixedComponentFragments > 0u);
 
     ScenarioData data{};
     data.scenarioName = "Scenario B: VerticalHalfCut";
     data.scenarioDirName = "scenario_b";
     data.fragments = std::move(fragments);
+    data.stepSectionStats = stepSectionStats;
     data.screenshotPath = options.screenshotPath;
     data.assertions.push_back(MakeAssertion(
         "vertical half cut should produce both CutSurface(skin boundary) and CutCap(meat boundary)",
         (cutSurfaceArea > kAreaEpsilon) && (cutCapArea > kAreaEpsilon),
         "CutSurface area=" + std::to_string(cutSurfaceArea) + ", CutCap area=" + std::to_string(cutCapArea)));
+    data.assertions.push_back(MakeAssertion(
+        "cross-section should keep skin/meat co-existence with minimum ratio and connectivity",
+        cutBoundaryQualityPass,
+        "section CutSurface ratio=" + std::to_string(sectionCutSurfaceRatio) +
+            ", CutCap ratio=" + std::to_string(sectionCutCapRatio) +
+            ", connected mixed fragments=" + std::to_string(stepSectionStats.front().mixedComponentFragments)));
 
     return PersistScenarioArtifacts(data, options);
 }
@@ -538,9 +799,16 @@ ScenarioExecutionResult RunScenarioC(const ScenarioExecutionOptions& options)
     const core::SliceEpsilon epsilon{};
     auto fragments = DefaultInitialFragments(options.generatorConfig);
     const auto scenario = BuildCutPlaneScenario(CutPlanePreset::VerticalThenHorizontalCut, options.generatorConfig);
+    std::vector<PlaneSectionStats> stepSectionStats;
+    stepSectionStats.reserve(scenario.planes.size());
     for (const auto& plane : scenario.planes)
     {
         fragments = ApplyPlaneCuts(fragments, plane, epsilon);
+        stepSectionStats.push_back(BuildPlaneSectionStats(
+            fragments,
+            plane,
+            epsilon,
+            static_cast<std::uint32_t>(stepSectionStats.size())));
     }
 
     const auto fragmentStats = BuildFragmentStats(fragments);
@@ -562,11 +830,31 @@ ScenarioExecutionResult RunScenarioC(const ScenarioExecutionOptions& options)
     data.scenarioName = "Scenario C: VerticalThenHorizontalCut";
     data.scenarioDirName = "scenario_c";
     data.fragments = std::move(fragments);
+    data.stepSectionStats = stepSectionStats;
     data.screenshotPath = options.screenshotPath;
     data.assertions.push_back(MakeAssertion(
         "after second cut, each fragment that has cut boundary keeps both CutSurface and CutCap",
         allBoundaryMixValid,
         "violating fragments=" + std::to_string(violatingCount) + ", total fragments=" + std::to_string(fragmentStats.size())));
+    if (!data.stepSectionStats.empty())
+    {
+        const auto& lastStep = data.stepSectionStats.back();
+        const auto sectionCutSurfaceArea = AreaForSurfaceType(lastStep.surfaceStats, core::SurfaceType::CutSurface);
+        const auto sectionCutCapArea = AreaForSurfaceType(lastStep.surfaceStats, core::SurfaceType::CutCap);
+        const auto sectionCutBoundaryArea = sectionCutSurfaceArea + sectionCutCapArea;
+        const auto sectionCutSurfaceRatio = sectionCutBoundaryArea > kAreaEpsilon ? (sectionCutSurfaceArea / sectionCutBoundaryArea) : 0.0f;
+        const auto sectionCutCapRatio = sectionCutBoundaryArea > kAreaEpsilon ? (sectionCutCapArea / sectionCutBoundaryArea) : 0.0f;
+        const auto sectionQualityPass =
+            (sectionCutSurfaceArea > kAreaEpsilon) && (sectionCutCapArea > kAreaEpsilon) &&
+            (sectionCutSurfaceRatio >= 0.05f) && (sectionCutCapRatio >= 0.05f) &&
+            (lastStep.mixedComponentFragments > 0u);
+        data.assertions.push_back(MakeAssertion(
+            "second-cut section should preserve CutSurface/CutCap ratio and connectedness",
+            sectionQualityPass,
+            "step=1, CutSurface ratio=" + std::to_string(sectionCutSurfaceRatio) +
+                ", CutCap ratio=" + std::to_string(sectionCutCapRatio) +
+                ", connected mixed fragments=" + std::to_string(lastStep.mixedComponentFragments)));
+    }
 
     return PersistScenarioArtifacts(data, options);
 }
@@ -576,10 +864,17 @@ ScenarioExecutionResult RunScenarioD(const ScenarioExecutionOptions& options)
     const core::SliceEpsilon epsilon{};
     auto fragments = DefaultInitialFragments(options.generatorConfig);
     const auto scenario = BuildCutPlaneScenario(CutPlanePreset::ProgressiveSkinRemoval, options.generatorConfig);
+    std::vector<PlaneSectionStats> stepSectionStats;
+    stepSectionStats.reserve(scenario.planes.size());
 
     for (const auto& plane : scenario.planes)
     {
         fragments = ApplyPlaneCuts(fragments, plane, epsilon);
+        stepSectionStats.push_back(BuildPlaneSectionStats(
+            fragments,
+            plane,
+            epsilon,
+            static_cast<std::uint32_t>(stepSectionStats.size())));
     }
 
     const auto fragmentStats = BuildFragmentStats(fragments);
@@ -599,11 +894,39 @@ ScenarioExecutionResult RunScenarioD(const ScenarioExecutionOptions& options)
     data.scenarioName = "Scenario D: ProgressiveSkinRemoval";
     data.scenarioDirName = "scenario_d";
     data.fragments = std::move(fragments);
+    data.stepSectionStats = stepSectionStats;
     data.screenshotPath = options.screenshotPath;
     data.assertions.push_back(MakeAssertion(
         "progressive skin removal should converge to region with OuterSurface/CutSurface ~= 0",
         sawSkinErasedRegion,
         "skin-erased fragment present=" + std::string(sawSkinErasedRegion ? "true" : "false")));
+    bool monotonicSkinBoundary = true;
+    bool sawZero = false;
+    float prevSkinBoundaryArea = std::numeric_limits<float>::infinity();
+    for (const auto& step : data.stepSectionStats)
+    {
+        const auto skinBoundaryArea = AreaForSurfaceType(step.surfaceStats, core::SurfaceType::CutSurface);
+        if (sawZero && skinBoundaryArea > kAreaEpsilon)
+        {
+            monotonicSkinBoundary = false;
+            break;
+        }
+        if (skinBoundaryArea <= kAreaEpsilon)
+        {
+            sawZero = true;
+        }
+        if (skinBoundaryArea > prevSkinBoundaryArea + kAreaEpsilon)
+        {
+            monotonicSkinBoundary = false;
+            break;
+        }
+        prevSkinBoundaryArea = skinBoundaryArea;
+    }
+    data.assertions.push_back(MakeAssertion(
+        "progressive cuts should keep section skin-boundary(CutSurface) area monotonic non-increasing",
+        monotonicSkinBoundary,
+        "step count=" + std::to_string(data.stepSectionStats.size()) +
+            ", reached zero=" + std::string(sawZero ? "true" : "false")));
 
     return PersistScenarioArtifacts(data, options);
 }
@@ -615,6 +938,8 @@ ScenarioExecutionResult RunScenarioE(const ScenarioExecutionOptions& options)
     const auto scenario = BuildCutPlaneScenario(CutPlanePreset::ShallowCutNoMeatExposure, options.generatorConfig);
     const bool innerShellIntersected = FragmentIntersectsPlane(fragments[1], scenario.planes.front(), epsilon);
     fragments = ApplyPlaneCuts(fragments, scenario.planes.front(), epsilon);
+    const auto stepSectionStats = std::vector<PlaneSectionStats>{
+        BuildPlaneSectionStats(fragments, scenario.planes.front(), epsilon, 0u)};
 
     const auto fragmentStats = BuildFragmentStats(fragments);
     bool allFragmentsNoCutCap = true;
@@ -635,6 +960,7 @@ ScenarioExecutionResult RunScenarioE(const ScenarioExecutionOptions& options)
     data.scenarioName = "Scenario E: ShallowCutNoMeatExposure";
     data.scenarioDirName = "scenario_e";
     data.fragments = std::move(fragments);
+    data.stepSectionStats = stepSectionStats;
     data.screenshotPath = options.screenshotPath;
     data.assertions.push_back(MakeAssertion(
         "shallow cut should keep CutCap == 0 for every fragment when inner shell is not intersected",
