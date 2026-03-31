@@ -9,6 +9,7 @@
 
 #include "viewer/debug_draw.hpp"
 #include "viewer/imgui_panels.hpp"
+#include "core/procedural_cube_generator.hpp"
 
 #if __has_include(<GLFW/glfw3.h>)
 #define COTRX_VIEWER_HAS_GLFW 1
@@ -56,7 +57,92 @@ void ResliceInPlace(core::Fragment& fragment)
     std::reverse(fragment.indices.begin(), fragment.indices.end());
 }
 
+Color ColorForSurfaceType(const core::SurfaceType surfaceType, const SurfaceColorMode colorMode)
+{
+    if (colorMode != SurfaceColorMode::SurfaceTypeRule)
+    {
+        return {0.82f, 0.75f, 0.70f, 1.0f};
+    }
+
+    switch (surfaceType)
+    {
+    case core::SurfaceType::OuterSurface:
+    case core::SurfaceType::CutSurface:
+        return {0.89f, 0.72f, 0.62f, 1.0f}; // skin tone
+    case core::SurfaceType::InnerSurface:
+    case core::SurfaceType::CutCap:
+        return {0.74f, 0.27f, 0.25f, 1.0f}; // meat tone
+    }
+
+    return {1.0f, 1.0f, 1.0f, 1.0f};
+}
+
+void RenderSceneMeshes(ViewerState& state, const std::vector<MeshData>& sceneMeshes)
+{
+    state.lastSceneMeshCount = sceneMeshes.size();
+    state.lastSceneTriangleCount = 0;
+    for (const auto& mesh : sceneMeshes)
+    {
+        state.lastSceneTriangleCount += mesh.indices.size() / 3;
+    }
+}
+
 } // namespace
+
+std::vector<MeshData> BuildSceneMeshesFromFragments(
+    const std::vector<core::Fragment>& fragments,
+    const SurfaceColorMode colorMode)
+{
+    std::vector<MeshData> meshes;
+    meshes.reserve(fragments.size());
+
+    for (const auto& fragment : fragments)
+    {
+        MeshData mesh{};
+        mesh.indices = fragment.indices;
+        mesh.vertices.reserve(fragment.vertices.size());
+
+        for (const auto& position : fragment.vertices)
+        {
+            mesh.vertices.push_back(Vertex{position, Vec3{0.0f, 0.0f, 0.0f}, ColorForSurfaceType(core::SurfaceType::OuterSurface, colorMode)});
+            ExpandBounds(mesh.bounds, position);
+        }
+
+        for (std::size_t tri = 0; tri + 2 < fragment.indices.size(); tri += 3)
+        {
+            const auto i0 = static_cast<std::size_t>(fragment.indices[tri + 0]);
+            const auto i1 = static_cast<std::size_t>(fragment.indices[tri + 1]);
+            const auto i2 = static_cast<std::size_t>(fragment.indices[tri + 2]);
+            if (i0 >= mesh.vertices.size() || i1 >= mesh.vertices.size() || i2 >= mesh.vertices.size())
+            {
+                continue;
+            }
+
+            const core::SurfaceType surfaceType =
+                tri / 3 < fragment.triangleSurfaceTags.size() ? fragment.triangleSurfaceTags[tri / 3] : core::SurfaceType::OuterSurface;
+            const Color vertexColor = ColorForSurfaceType(surfaceType, colorMode);
+            mesh.vertices[i0].color = vertexColor;
+            mesh.vertices[i1].color = vertexColor;
+            mesh.vertices[i2].color = vertexColor;
+
+            const Vec3 normal = Normalize(Cross(
+                mesh.vertices[i1].position - mesh.vertices[i0].position,
+                mesh.vertices[i2].position - mesh.vertices[i0].position));
+            mesh.vertices[i0].normal = mesh.vertices[i0].normal + normal;
+            mesh.vertices[i1].normal = mesh.vertices[i1].normal + normal;
+            mesh.vertices[i2].normal = mesh.vertices[i2].normal + normal;
+        }
+
+        for (auto& vertex : mesh.vertices)
+        {
+            vertex.normal = Normalize(vertex.normal);
+        }
+
+        meshes.push_back(std::move(mesh));
+    }
+
+    return meshes;
+}
 
 void OrbitCameraState::Orbit(const float deltaYawRadians, const float deltaPitchRadians)
 {
@@ -117,6 +203,12 @@ bool ViewerApp::Initialize()
 
     initialized_ = true;
     state_.running = true;
+    if (state_.fragments.empty())
+    {
+        const auto seedPair = core::GenerateProceduralCubeShellPair(core::ProceduralCubeGeneratorConfig{});
+        state_.fragments.push_back(seedPair.outerShell);
+        state_.fragments.push_back(seedPair.innerShell);
+    }
     UpdateStats();
     return true;
 }
@@ -139,6 +231,9 @@ void ViewerApp::Run()
 
     while (state_.running)
     {
+        const auto sceneMeshes = BuildSceneMeshesFromFragments(state_.fragments, state_.colorMode);
+        RenderSceneMeshes(state_, sceneMeshes);
+
         BuildManipulatorPanel(state_);
         BuildRenderModePanel(state_);
         BuildExportPanel(state_);
