@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 
-project(CookieOnTheRoofX VERSION 0.1.0 LANGUAGES C CXX)
+project(CookieOnTheRoofX VERSION 0.1.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -84,6 +84,7 @@ target_include_directories(cotrx_core
 
 target_compile_definitions(cotrx_core
     PRIVATE
+        COTRX_VERSION_STRING="${PROJECT_VERSION}"
         $<$<PLATFORM_ID:Windows>:NOMINMAX>
         $<$<PLATFORM_ID:Windows>:WIN32_LEAN_AND_MEAN>)
 
