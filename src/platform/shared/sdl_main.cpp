@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <string>
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
@@ -15,6 +16,13 @@
 
 namespace
 {
+enum class AppMode : std::uint8_t
+{
+    Launcher = 0,
+    CookieOnTheRoofX,
+    MeshSlicePrototype,
+};
+
 struct TouchPoint
 {
     SDL_FingerID id = 0;
@@ -120,6 +128,23 @@ float TouchToPixels(float value, int size)
     return value * static_cast<float>(size);
 }
 
+struct LauncherButton
+{
+    AppMode targetMode = AppMode::Launcher;
+    std::string label;
+    float x = 0.0f;
+    float y = 0.0f;
+    float width = 0.0f;
+    float height = 0.0f;
+    bool hovered = false;
+    bool pressed = false;
+
+    [[nodiscard]] bool Contains(float px, float py) const
+    {
+        return px >= x && py >= y && px <= (x + width) && py <= (y + height);
+    }
+};
+
 struct App
 {
     cotrx::EngineConfig config = cotrx::MakePlatformConfig();
@@ -127,6 +152,7 @@ struct App
     SDL_GLContext glContext = nullptr;
     cotrx::Renderer renderer;
     cotrx::Simulation simulation{1337u};
+    AppMode currentMode = AppMode::Launcher;
     std::uint64_t lastSceneRevision = 0;
     int windowWidth = 0;
     int windowHeight = 0;
@@ -144,6 +170,121 @@ struct App
     SDL_FingerID orbitFingerId = 0;
     float lastPinchDistance = 0.0f;
     std::array<TouchPoint, 4> touches{};
+    std::array<LauncherButton, 2> launcherButtons{
+        LauncherButton{AppMode::CookieOnTheRoofX, "COOKIE ON THE ROOF X"},
+        LauncherButton{AppMode::MeshSlicePrototype, "MESH SLICE"}};
+    int launcherPressedButton = -1;
+    SDL_FingerID launcherPressedTouchId = 0;
+
+    void RefreshLauncherLayout()
+    {
+        constexpr float buttonWidth = 340.0f;
+        constexpr float buttonHeight = 54.0f;
+        constexpr float buttonGap = 18.0f;
+        const auto startX = (static_cast<float>(windowWidth) - buttonWidth) * 0.5f;
+        const auto startY = (static_cast<float>(windowHeight) * 0.5f) - buttonHeight - (buttonGap * 0.5f);
+
+        for (std::size_t index = 0; index < launcherButtons.size(); ++index)
+        {
+            auto& button = launcherButtons[index];
+            button.x = startX;
+            button.y = startY + static_cast<float>(index) * (buttonHeight + buttonGap);
+            button.width = buttonWidth;
+            button.height = buttonHeight;
+        }
+    }
+
+    [[nodiscard]] int HitTestLauncherButton(float x, float y) const
+    {
+        for (std::size_t index = 0; index < launcherButtons.size(); ++index)
+        {
+            if (launcherButtons[index].Contains(x, y))
+            {
+                return static_cast<int>(index);
+            }
+        }
+
+        return -1;
+    }
+
+    void SetLauncherHover(float x, float y)
+    {
+        const auto hoveredIndex = HitTestLauncherButton(x, y);
+        for (std::size_t index = 0; index < launcherButtons.size(); ++index)
+        {
+            launcherButtons[index].hovered = static_cast<int>(index) == hoveredIndex;
+        }
+    }
+
+    void SetLauncherPressed(int pressedButton)
+    {
+        launcherPressedButton = pressedButton;
+        for (std::size_t index = 0; index < launcherButtons.size(); ++index)
+        {
+            launcherButtons[index].pressed = static_cast<int>(index) == pressedButton;
+        }
+    }
+
+    void ClearLauncherPointerState()
+    {
+        SetLauncherPressed(-1);
+        launcherPressedTouchId = 0;
+    }
+
+    void SetMode(AppMode mode)
+    {
+        currentMode = mode;
+        mouseOrbiting = false;
+        mousePressedAction = cotrx::UiAction::None;
+        touchPressedAction = cotrx::UiAction::None;
+        touchPressedId = 0;
+        orbitFingerId = 0;
+        lastPinchDistance = 0.0f;
+        touches = {};
+        simulation.SetPressedAction(cotrx::UiAction::None);
+        ClearLauncherPointerState();
+    }
+
+    [[nodiscard]] cotrx::SimulationState BuildUiStateForCurrentMode() const
+    {
+        cotrx::SimulationState uiState{};
+        uiState.versionLabel = simulation.State().versionLabel;
+
+        if (currentMode == AppMode::Launcher)
+        {
+            uiState.hudLines = {
+                "APP LAUNCHER",
+                "SELECT A PROTOTYPE",
+                "COOKIE ON THE ROOF X",
+                "MESH SLICE"};
+
+            uiState.buttons.reserve(launcherButtons.size());
+            for (const auto& button : launcherButtons)
+            {
+                cotrx::ButtonState uiButton{};
+                uiButton.label = button.label;
+                uiButton.x = button.x;
+                uiButton.y = button.y;
+                uiButton.width = button.width;
+                uiButton.height = button.height;
+                uiButton.hovered = button.hovered;
+                uiButton.pressed = button.pressed;
+                uiState.buttons.push_back(uiButton);
+            }
+            return uiState;
+        }
+
+        if (currentMode == AppMode::MeshSlicePrototype)
+        {
+            uiState.hudLines = {
+                "MESH SLICE PROTOTYPE",
+                "STATUS: PLACEHOLDER",
+                "PRESS ESC TO RETURN"};
+            return uiState;
+        }
+
+        return simulation.State();
+    }
 
     bool Initialize()
     {
@@ -214,6 +355,7 @@ struct App
         rendererInitialized = true;
 
         RefreshViewportSize();
+        RefreshLauncherLayout();
         renderer.RebuildScene(simulation.State());
         lastSceneRevision = simulation.SceneRevision();
         running = true;
@@ -233,13 +375,14 @@ struct App
             return false;
         }
 
-        if (simulation.SceneRevision() != lastSceneRevision)
+        if (currentMode == AppMode::CookieOnTheRoofX && simulation.SceneRevision() != lastSceneRevision)
         {
             renderer.RebuildScene(simulation.State());
             lastSceneRevision = simulation.SceneRevision();
         }
 
-        renderer.Render(simulation.State(), config.clearColor, windowWidth, windowHeight, drawableWidth, drawableHeight);
+        const auto uiState = BuildUiStateForCurrentMode();
+        renderer.Render(uiState, config.clearColor, windowWidth, windowHeight, drawableWidth, drawableHeight);
         SDL_GL_SwapWindow(window);
         return running;
     }
@@ -283,6 +426,7 @@ struct App
         SDL_GetWindowSize(window, &windowWidth, &windowHeight);
         SDL_GL_GetDrawableSize(window, &drawableWidth, &drawableHeight);
         simulation.SetViewportSize(windowWidth, windowHeight);
+        RefreshLauncherLayout();
     }
 
     void HandleEvent(const SDL_Event& event)
@@ -300,10 +444,22 @@ struct App
             }
             break;
 
+        case SDL_KEYDOWN:
+            if (event.key.keysym.sym == SDLK_ESCAPE && currentMode != AppMode::Launcher)
+            {
+                SetMode(AppMode::Launcher);
+            }
+            break;
+
         case SDL_MOUSEMOTION:
         {
             const auto x = static_cast<float>(event.motion.x);
             const auto y = static_cast<float>(event.motion.y);
+            if (currentMode == AppMode::Launcher)
+            {
+                SetLauncherHover(x, y);
+                break;
+            }
             simulation.UpdateHover(x, y);
             if (mouseOrbiting)
             {
@@ -319,6 +475,11 @@ struct App
             {
                 lastMouseX = static_cast<float>(event.button.x);
                 lastMouseY = static_cast<float>(event.button.y);
+                if (currentMode == AppMode::Launcher)
+                {
+                    SetLauncherPressed(HitTestLauncherButton(lastMouseX, lastMouseY));
+                    break;
+                }
                 mousePressedAction = simulation.HitTestButton(lastMouseX, lastMouseY);
                 simulation.SetPressedAction(mousePressedAction);
                 mouseOrbiting = mousePressedAction == cotrx::UiAction::None;
@@ -330,6 +491,17 @@ struct App
             {
                 const auto releaseX = static_cast<float>(event.button.x);
                 const auto releaseY = static_cast<float>(event.button.y);
+                if (currentMode == AppMode::Launcher)
+                {
+                    const auto releasedButton = HitTestLauncherButton(releaseX, releaseY);
+                    if (launcherPressedButton >= 0 && launcherPressedButton == releasedButton)
+                    {
+                        SetMode(launcherButtons[static_cast<std::size_t>(launcherPressedButton)].targetMode);
+                    }
+                    ClearLauncherPointerState();
+                    SetLauncherHover(releaseX, releaseY);
+                    break;
+                }
                 if (mousePressedAction != cotrx::UiAction::None && simulation.HitTestButton(releaseX, releaseY) == mousePressedAction)
                 {
                     simulation.QueueAction(mousePressedAction);
@@ -343,7 +515,10 @@ struct App
             break;
 
         case SDL_MOUSEWHEEL:
-            simulation.ZoomFromInput(-event.wheel.preciseY * 0.55f);
+            if (currentMode == AppMode::CookieOnTheRoofX)
+            {
+                simulation.ZoomFromInput(-event.wheel.preciseY * 0.55f);
+            }
             break;
 
         case SDL_FINGERDOWN:
@@ -356,6 +531,14 @@ struct App
 
             touch->x = TouchToPixels(event.tfinger.x, windowWidth);
             touch->y = TouchToPixels(event.tfinger.y, windowHeight);
+            if (currentMode == AppMode::Launcher)
+            {
+                const auto pressedButton = HitTestLauncherButton(touch->x, touch->y);
+                SetLauncherPressed(pressedButton);
+                launcherPressedTouchId = pressedButton >= 0 ? event.tfinger.fingerId : 0;
+                SetLauncherHover(touch->x, touch->y);
+                break;
+            }
             const auto activeCount = CountActiveTouches(touches);
 
             if (activeCount == 1)
@@ -391,6 +574,15 @@ struct App
             const auto previousY = touch->y;
             touch->x = TouchToPixels(event.tfinger.x, windowWidth);
             touch->y = TouchToPixels(event.tfinger.y, windowHeight);
+            if (currentMode == AppMode::Launcher)
+            {
+                SetLauncherHover(touch->x, touch->y);
+                if (launcherPressedTouchId == event.tfinger.fingerId)
+                {
+                    SetLauncherPressed(HitTestLauncherButton(touch->x, touch->y));
+                }
+                break;
+            }
             const auto activeCount = CountActiveTouches(touches);
 
             if (activeCount >= 2)
@@ -414,6 +606,21 @@ struct App
             auto* touch = FindTouch(touches, event.tfinger.fingerId);
             const auto releaseX = touch != nullptr ? touch->x : TouchToPixels(event.tfinger.x, windowWidth);
             const auto releaseY = touch != nullptr ? touch->y : TouchToPixels(event.tfinger.y, windowHeight);
+            if (currentMode == AppMode::Launcher)
+            {
+                const auto releasedButton = HitTestLauncherButton(releaseX, releaseY);
+                if (launcherPressedTouchId == event.tfinger.fingerId && launcherPressedButton >= 0 && launcherPressedButton == releasedButton)
+                {
+                    SetMode(launcherButtons[static_cast<std::size_t>(launcherPressedButton)].targetMode);
+                }
+                if (launcherPressedTouchId == event.tfinger.fingerId)
+                {
+                    ClearLauncherPointerState();
+                }
+                SetLauncherHover(releaseX, releaseY);
+                ReleaseTouch(touches, event.tfinger.fingerId);
+                break;
+            }
 
             if (touchPressedId == event.tfinger.fingerId && touchPressedAction != cotrx::UiAction::None)
             {
