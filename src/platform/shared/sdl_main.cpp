@@ -23,6 +23,28 @@ enum class AppMode : std::uint8_t
     MeshSlicePrototype,
 };
 
+AppMode ParseInitialMode(int argc, char* argv[])
+{
+    for (int index = 1; index < argc; ++index)
+    {
+        const std::string argument = argv[index] != nullptr ? argv[index] : "";
+        if (argument == "--mode=cookie")
+        {
+            return AppMode::CookieOnTheRoofX;
+        }
+        if (argument == "--mode=mesh")
+        {
+            return AppMode::MeshSlicePrototype;
+        }
+        if (argument == "--mode=launcher")
+        {
+            return AppMode::Launcher;
+        }
+    }
+
+    return AppMode::Launcher;
+}
+
 struct TouchPoint
 {
     SDL_FingerID id = 0;
@@ -171,7 +193,7 @@ struct App
     float lastPinchDistance = 0.0f;
     std::array<TouchPoint, 4> touches{};
     std::array<LauncherButton, 2> launcherButtons{
-        LauncherButton{AppMode::CookieOnTheRoofX, "COOKIE ON THE ROOF X"},
+        LauncherButton{AppMode::CookieOnTheRoofX, "COOKIE ON THE ROOF"},
         LauncherButton{AppMode::MeshSlicePrototype, "MESH SLICE"}};
     int launcherPressedButton = -1;
     SDL_FingerID launcherPressedTouchId = 0;
@@ -376,7 +398,7 @@ struct App
             uiState.hudLines = {
                 "PROTOTYPE SELECTOR",
                 "프로토타입 선택",
-                "COOKIE ON THE ROOF X / MESH SLICE"};
+                "COOKIE ON THE ROOF / MESH SLICE"};
             uiState.footer = "PROTOTYPE LAUNCHER";
 
             uiState.buttons.reserve(launcherButtons.size());
@@ -427,7 +449,7 @@ struct App
         const auto& state = simulation.State();
         uiState.buttons = state.buttons;
         uiState.hudLines = state.hudLines;
-        uiState.footer = "COOKIE ON THE ROOF X";
+        uiState.footer = "COOKIE ON THE ROOF";
         return uiState;
     }
 
@@ -877,11 +899,11 @@ void TickApp(void* userData)
 
 int main(int argc, char* argv[])
 {
-    (void)argc;
-    (void)argv;
+    const auto initialMode = ParseInitialMode(argc, argv);
 
 #ifdef __EMSCRIPTEN__
     auto* app = new App();
+    app->currentMode = initialMode;
     if (!app->Initialize())
     {
         delete app;
@@ -892,6 +914,7 @@ int main(int argc, char* argv[])
     return 0;
 #else
     App app;
+    app.currentMode = initialMode;
     if (!app.Initialize())
     {
         return 1;

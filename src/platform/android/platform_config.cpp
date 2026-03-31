@@ -8,7 +8,7 @@ EngineConfig MakePlatformConfig()
     config.windowWidth = 1280;
     config.windowHeight = 720;
     config.targetFps = 60;
-    config.title = "Cookie On The Roof X";
+    config.title = "DEDEngine";
     config.clearColor = {0.95f, 0.95f, 0.92f, 1.0f};
     config.preferGles = true;
     config.landscapeOnly = true;
