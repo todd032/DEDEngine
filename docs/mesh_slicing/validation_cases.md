@@ -1,62 +1,52 @@
-# Mesh Slicing Validation Cases (A~E)
+# Mesh Slicing Validation Cases (고정 5개 시나리오)
 
-아래 케이스는 공통적으로 **2-shell 가정** 및 **contour 기반 region 구성** 유지 여부를 확인한다.
+아래 시나리오는 `scenario_runner`의 preset과 1:1로 매칭되며, 검증 기준은 **총면적 비교**가 아니라 **surface-type 조합 규칙** 중심으로 정의한다.
 
-## Case A: 정중앙 단일 절단 (정상)
+## Case A: `InitialVisibility`
 - Setup
-  - watertight 샘플 메시 1개
-  - plane: 모델 중심 통과, 주축과 직교
+  - 2-shell procedural cube(Outer/Inner) 생성
+  - 절단 plane 적용 없음
 - Action
-  - 단일 slicing 실행
-- Expected
-  - 폐합 contour loop >= 1
-  - shell 2개 분할 성공
-- Check
-  - invalid loop = 0
-  - region 수가 contour 구성과 일치
+  - 초기 fragment 상태를 그대로 수집
+- Expected / Check
+  - 외부 관찰 가능한 경계(surface-type 기준)에서 `OuterSurface`만 노출
+  - `CutSurface == 0` 및 `CutCap == 0`
 
-## Case B: 얕은 각도 절단 (수치 민감)
+## Case B: `VerticalHalfCut`
 - Setup
-  - 길쭉한 메시 + plane normal이 거의 평행한 edge 다수
+  - 모델 중심을 통과하는 수직 절단 plane 1개(X축 법선)
 - Action
-  - 동일 plane로 10회 반복 실행
-- Expected
-  - contour 수/길이 통계가 반복 간 동일(결정성)
-- Check
-  - run-to-run diff가 허용 오차 이내
-  - epsilon 로그가 기록됨
+  - plane 1회 적용
+- Expected / Check
+  - 절단면에서 `CutSurface`(피부 경계)와 `CutCap`(속살)이 동시에 존재
+  - 즉, 집계 기준으로 `CutSurface > 0` AND `CutCap > 0`
 
-## Case C: coplanar 면 다수 포함
+## Case C: `VerticalThenHorizontalCut`
 - Setup
-  - plane과 거의 일치하는 triangle band 포함 메시
+  - 1차 수직 절단 plane(X축 법선)
+  - 2차 수평 절단 plane(Y축 법선)
 - Action
-  - slicing + region 빌드
-- Expected
-  - coplanar 버킷 처리 후도 contour loop 폐합 유지
-- Check
-  - coplanarTris 카운트 > 0
-  - region 생성 실패 없음
+  - plane을 순차 적용(2-step)
+- Expected / Check
+  - 2차 절단 이후에도 절단 경계가 있는 각 fragment는
+    - `CutSurface > 0` 이면 `CutCap > 0`
+    - `CutCap > 0` 이면 `CutSurface > 0`
+  - 즉, 절단면 조합 규칙이 fragment 단위로 유지
 
-## Case D: 재절단 시나리오
+## Case D: `ProgressiveSkinRemoval`
 - Setup
-  - Case A 결과를 캐시
-  - plane을 소폭 이동해 2차 slicing
+  - +X 방향에서 안쪽으로 진입하는 다단계 수직 plane 시퀀스
 - Action
-  - re-slicing (정확도 우선/속도 우선 각 1회)
-- Expected
-  - 두 모드 모두 유효한 contour/region 생성
-  - diff 이벤트가 논리적으로 타당
-- Check
-  - split/merge 이벤트 수동 검토 통과
-  - invalid loop = 0
+  - 동일 방향 plane을 단계적으로 적용하여 skin 영역을 반복 제거
+- Expected / Check
+  - 특정 fragment/영역에서 `OuterSurface`와 `CutSurface` 면적이 0에 수렴(≈0)
+  - 검증은 `OuterSurface <= epsilon` AND `CutSurface <= epsilon` fragment 존재 여부로 수행
 
-## Case E: 실패 유도 입력
+## Case E: `ShallowCutNoMeatExposure`
 - Setup
-  - 자기 교차 가능성이 있는 비정상 메시 또는 끊긴 경계
+  - outer shell만 교차하고 inner shell은 교차하지 않는 얕은 수직 plane 1개
 - Action
-  - slicing 실행
-- Expected
-  - 시스템이 조용히 성공 처리하지 않고 경고/실패를 명시
-- Check
-  - 오류 코드/로그 메시지 확인
-  - 아티팩트에 실패 사유(JSON 또는 텍스트) 저장
+  - plane 1회 적용
+- Expected / Check
+  - inner shell 미교차 조건에서 모든 결과 fragment에 대해 `CutCap == 0`
+  - aggregate/fragment 단위 모두 `CutCap` 비노출을 확인

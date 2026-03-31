@@ -45,19 +45,37 @@ int main()
     success &= Check(NearlyEqual(shellPair.outerShell.bounds.max.x, 1.0f), "Outer shell extent should match generator half extent.");
     success &= Check(NearlyEqual(shellPair.innerShell.bounds.max.x, 0.8f), "Inner shell should apply skin thickness inset.");
 
-    const auto exactHalfCut = validation::BuildCutPlaneScenario(validation::CutPlanePreset::ExactHalfCut, cubeConfig);
-    const auto shallowCut = validation::BuildCutPlaneScenario(validation::CutPlanePreset::ShallowCut, cubeConfig);
-    const auto repeatedTrimming = validation::BuildCutPlaneScenario(validation::CutPlanePreset::RepeatedTrimming, cubeConfig);
+    const auto initialVisibility = validation::BuildCutPlaneScenario(validation::CutPlanePreset::InitialVisibility, cubeConfig);
+    const auto verticalHalfCut = validation::BuildCutPlaneScenario(validation::CutPlanePreset::VerticalHalfCut, cubeConfig);
+    const auto verticalThenHorizontalCut = validation::BuildCutPlaneScenario(validation::CutPlanePreset::VerticalThenHorizontalCut, cubeConfig);
+    const auto progressiveSkinRemoval = validation::BuildCutPlaneScenario(validation::CutPlanePreset::ProgressiveSkinRemoval, cubeConfig);
+    const auto shallowNoMeat = validation::BuildCutPlaneScenario(validation::CutPlanePreset::ShallowCutNoMeatExposure, cubeConfig);
 
-    success &= Check(exactHalfCut.name == "ExactHalfCut" && exactHalfCut.planes.size() == 1u, "ExactHalfCut preset should provide one plane.");
-    success &= Check(shallowCut.name == "ShallowCut" && shallowCut.planes.size() == 1u, "ShallowCut preset should provide one plane.");
-    success &= Check(repeatedTrimming.name == "RepeatedTrimming" && repeatedTrimming.planes.size() == 3u, "RepeatedTrimming preset should provide three planes.");
+    success &= Check(
+        initialVisibility.name == "InitialVisibility" && initialVisibility.planes.empty(),
+        "[Scenario: InitialVisibility][PlaneStep: none] preset should provide zero planes.");
+    success &= Check(
+        verticalHalfCut.name == "VerticalHalfCut" && verticalHalfCut.planes.size() == 1u,
+        "[Scenario: VerticalHalfCut][PlaneStep: 1] preset should provide one plane.");
+    success &= Check(
+        verticalThenHorizontalCut.name == "VerticalThenHorizontalCut" && verticalThenHorizontalCut.planes.size() == 2u,
+        "[Scenario: VerticalThenHorizontalCut][PlaneStep: 1..2] preset should provide two planes.");
+    success &= Check(
+        progressiveSkinRemoval.name == "ProgressiveSkinRemoval" && progressiveSkinRemoval.planes.size() == 4u,
+        "[Scenario: ProgressiveSkinRemoval][PlaneStep: 1..4] preset should provide four planes.");
+    success &= Check(
+        shallowNoMeat.name == "ShallowCutNoMeatExposure" && shallowNoMeat.planes.size() == 1u,
+        "[Scenario: ShallowCutNoMeatExposure][PlaneStep: 1] preset should provide one plane.");
 
-    const auto shallowPass = validation::RunScenarioChecks({validation::CutPlanePreset::ShallowCut, false, 0.0f});
-    const auto shallowFail = validation::RunScenarioChecks({validation::CutPlanePreset::ShallowCut, false, 0.1f});
+    const auto shallowPass = validation::RunScenarioChecks({validation::CutPlanePreset::ShallowCutNoMeatExposure, false, 0.0f});
+    const auto shallowFail = validation::RunScenarioChecks({validation::CutPlanePreset::ShallowCutNoMeatExposure, false, 0.1f});
 
-    success &= Check(shallowPass.passed, "ShallowCut check should pass when CutCap area is zero and inner shell is not intersected.");
-    success &= Check(!shallowFail.passed, "ShallowCut check should fail when CutCap area is non-zero without inner-shell intersection.");
+    success &= Check(
+        shallowPass.passed,
+        "[Scenario: ShallowCutNoMeatExposure][PlaneStep: 1] check should pass when CutCap is zero without inner-shell intersection.");
+    success &= Check(
+        !shallowFail.passed,
+        "[Scenario: ShallowCutNoMeatExposure][PlaneStep: 1] check should fail when CutCap is non-zero without inner-shell intersection.");
 
     if (!success)
     {

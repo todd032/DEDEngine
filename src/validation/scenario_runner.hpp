@@ -12,9 +12,11 @@ namespace cotrx::validation
 
 enum class CutPlanePreset
 {
-    ExactHalfCut,
-    ShallowCut,
-    RepeatedTrimming
+    InitialVisibility,
+    VerticalHalfCut,
+    VerticalThenHorizontalCut,
+    ProgressiveSkinRemoval,
+    ShallowCutNoMeatExposure
 };
 
 struct CutPlaneScenarioInput
@@ -25,7 +27,7 @@ struct CutPlaneScenarioInput
 
 struct ScenarioCheckInput
 {
-    CutPlanePreset preset = CutPlanePreset::ExactHalfCut;
+    CutPlanePreset preset = CutPlanePreset::InitialVisibility;
     bool innerShellIntersected = false;
     float cutCapArea = 0.0f;
 };
