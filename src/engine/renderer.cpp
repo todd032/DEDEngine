@@ -197,6 +197,23 @@ void Renderer::RebuildScene(const SimulationState& state)
 
 void Renderer::Render(const SimulationState& state, const Color& clearColor, int uiWidth, int uiHeight, int drawableWidth, int drawableHeight)
 {
+    UiOverlayState uiState{};
+    uiState.buttons = state.buttons;
+    uiState.hudLines = state.hudLines;
+    uiState.footer = "COOKIE ON THE ROOF X";
+    uiState.versionLabel = state.versionLabel;
+    Render(state, uiState, clearColor, uiWidth, uiHeight, drawableWidth, drawableHeight);
+}
+
+void Renderer::Render(
+    const SimulationState& state,
+    const UiOverlayState& uiState,
+    const Color& clearColor,
+    int uiWidth,
+    int uiHeight,
+    int drawableWidth,
+    int drawableHeight)
+{
     glViewport(0, 0, drawableWidth, drawableHeight);
     glClearColor(clearColor.r, clearColor.g, clearColor.b, clearColor.a);
     glEnable(GL_DEPTH_TEST);
@@ -227,7 +244,7 @@ void Renderer::Render(const SimulationState& state, const Color& clearColor, int
     }
 
     std::vector<UiVertex> uiVertices;
-    BuildUiVertices(state, uiWidth, uiHeight, uiVertices);
+    BuildUiVertices(uiState, uiWidth, uiHeight, uiVertices);
 
     glDisable(GL_CULL_FACE);
     glDisable(GL_DEPTH_TEST);
@@ -451,6 +468,16 @@ void Renderer::DestroyMeshes()
 
 void Renderer::BuildUiVertices(const SimulationState& state, int width, int height, std::vector<UiVertex>& vertices) const
 {
+    UiOverlayState uiState{};
+    uiState.buttons = state.buttons;
+    uiState.hudLines = state.hudLines;
+    uiState.footer = "COOKIE ON THE ROOF X";
+    uiState.versionLabel = state.versionLabel;
+    BuildUiVertices(uiState, width, height, vertices);
+}
+
+void Renderer::BuildUiVertices(const UiOverlayState& uiState, int width, int height, std::vector<UiVertex>& vertices) const
+{
     const Color buttonFill{0.12f, 0.15f, 0.18f, 0.88f};
     const Color buttonHover{0.17f, 0.21f, 0.25f, 0.92f};
     const Color buttonPressed{0.91f, 0.47f, 0.15f, 0.95f};
@@ -460,7 +487,7 @@ void Renderer::BuildUiVertices(const SimulationState& state, int width, int heig
     const Color hudFrame{0.34f, 0.38f, 0.41f, 0.95f};
     const Color hudText{0.95f, 0.95f, 0.92f, 1.0f};
 
-    for (const auto& button : state.buttons)
+    for (const auto& button : uiState.buttons)
     {
         const auto fill = button.pressed ? buttonPressed : (button.hovered ? buttonHover : buttonFill);
         AppendRect(vertices, button.x, button.y, button.width, button.height, fill);
@@ -470,7 +497,7 @@ void Renderer::BuildUiVertices(const SimulationState& state, int width, int heig
 
     const auto panelWidth = 248.0f;
     const auto lineHeight = 18.0f;
-    const auto panelHeight = 18.0f + (lineHeight * static_cast<float>(state.hudLines.size())) + 16.0f;
+    const auto panelHeight = 18.0f + (lineHeight * static_cast<float>(uiState.hudLines.size())) + 16.0f;
     const auto panelX = static_cast<float>(width) - panelWidth - 20.0f;
     const auto panelY = 20.0f;
 
@@ -478,22 +505,24 @@ void Renderer::BuildUiVertices(const SimulationState& state, int width, int heig
     AppendFrame(vertices, panelX, panelY, panelWidth, panelHeight, 2.0f, hudFrame);
 
     auto textY = panelY + 14.0f;
-    for (const auto& line : state.hudLines)
+    for (const auto& line : uiState.hudLines)
     {
         AppendText(vertices, panelX + 14.0f, textY, 2.0f, line, hudText);
         textY += lineHeight;
     }
 
-    const auto footer = std::string("COOKIE ON THE ROOF X");
     const auto footerY = static_cast<float>(height) - 28.0f;
-    AppendText(vertices, 20.0f, footerY, 2.0f, footer, hudText);
+    if (!uiState.footer.empty())
+    {
+        AppendText(vertices, 20.0f, footerY, 2.0f, uiState.footer, hudText);
+    }
 
-    if (!state.versionLabel.empty())
+    if (!uiState.versionLabel.empty())
     {
         constexpr float versionScale = 2.0f;
-        const auto versionWidth = static_cast<float>(state.versionLabel.size()) * versionScale * 6.0f;
+        const auto versionWidth = static_cast<float>(uiState.versionLabel.size()) * versionScale * 6.0f;
         const auto versionX = static_cast<float>(width) - 20.0f - versionWidth;
-        AppendText(vertices, versionX, footerY, versionScale, state.versionLabel, hudText);
+        AppendText(vertices, versionX, footerY, versionScale, uiState.versionLabel, hudText);
     }
 }
 

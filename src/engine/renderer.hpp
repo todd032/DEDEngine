@@ -17,6 +17,14 @@ public:
     void Shutdown();
     void RebuildScene(const SimulationState& state);
     void Render(const SimulationState& state, const Color& clearColor, int uiWidth, int uiHeight, int drawableWidth, int drawableHeight);
+    void Render(
+        const SimulationState& state,
+        const UiOverlayState& uiState,
+        const Color& clearColor,
+        int uiWidth,
+        int uiHeight,
+        int drawableWidth,
+        int drawableHeight);
 
 private:
     struct GpuMesh
@@ -41,6 +49,7 @@ private:
     bool UploadMesh(const MeshData& mesh, GpuMesh& gpuMesh);
     void DestroyMeshes();
     void BuildUiVertices(const SimulationState& state, int width, int height, std::vector<UiVertex>& vertices) const;
+    void BuildUiVertices(const UiOverlayState& uiState, int width, int height, std::vector<UiVertex>& vertices) const;
     void AppendRect(std::vector<UiVertex>& vertices, float x, float y, float width, float height, const Color& color) const;
     void AppendFrame(std::vector<UiVertex>& vertices, float x, float y, float width, float height, float thickness, const Color& color) const;
     void AppendText(std::vector<UiVertex>& vertices, float x, float y, float scale, const std::string& text, const Color& color) const;

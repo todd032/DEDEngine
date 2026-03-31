@@ -378,4 +378,12 @@ struct ButtonState
         return px >= x && py >= y && px <= (x + width) && py <= (y + height);
     }
 };
+
+struct UiOverlayState
+{
+    std::vector<ButtonState> buttons;
+    std::vector<std::string> hudLines;
+    std::string footer;
+    std::string versionLabel;
+};
 } // namespace cotrx

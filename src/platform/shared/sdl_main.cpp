@@ -245,18 +245,18 @@ struct App
         ClearLauncherPointerState();
     }
 
-    [[nodiscard]] cotrx::SimulationState BuildUiStateForCurrentMode() const
+    [[nodiscard]] cotrx::UiOverlayState BuildUiStateForCurrentMode() const
     {
-        cotrx::SimulationState uiState{};
+        cotrx::UiOverlayState uiState{};
         uiState.versionLabel = simulation.State().versionLabel;
 
         if (currentMode == AppMode::Launcher)
         {
             uiState.hudLines = {
-                "APP LAUNCHER",
-                "SELECT A PROTOTYPE",
-                "COOKIE ON THE ROOF X",
-                "MESH SLICE"};
+                "PROTOTYPE SELECTOR",
+                "프로토타입 선택",
+                "COOKIE ON THE ROOF X / MESH SLICE"};
+            uiState.footer = "PROTOTYPE LAUNCHER";
 
             uiState.buttons.reserve(launcherButtons.size());
             for (const auto& button : launcherButtons)
@@ -278,12 +278,18 @@ struct App
         {
             uiState.hudLines = {
                 "MESH SLICE PROTOTYPE",
-                "STATUS: PLACEHOLDER",
+                "PLACEHOLDER VIEW ACTIVE",
+                "BUTTON WORKFLOW READY",
                 "PRESS ESC TO RETURN"};
+            uiState.footer = "MESH SLICE PROTOTYPE";
             return uiState;
         }
 
-        return simulation.State();
+        const auto& state = simulation.State();
+        uiState.buttons = state.buttons;
+        uiState.hudLines = state.hudLines;
+        uiState.footer = "COOKIE ON THE ROOF X";
+        return uiState;
     }
 
     bool Initialize()
@@ -382,7 +388,7 @@ struct App
         }
 
         const auto uiState = BuildUiStateForCurrentMode();
-        renderer.Render(uiState, config.clearColor, windowWidth, windowHeight, drawableWidth, drawableHeight);
+        renderer.Render(simulation.State(), uiState, config.clearColor, windowWidth, windowHeight, drawableWidth, drawableHeight);
         SDL_GL_SwapWindow(window);
         return running;
     }
