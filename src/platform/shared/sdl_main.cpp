@@ -175,6 +175,16 @@ struct App
         LauncherButton{AppMode::MeshSlicePrototype, "MESH SLICE"}};
     int launcherPressedButton = -1;
     SDL_FingerID launcherPressedTouchId = 0;
+    std::array<LauncherButton, 3> meshButtons{
+        LauncherButton{AppMode::MeshSlicePrototype, "TOGGLE GRID"},
+        LauncherButton{AppMode::MeshSlicePrototype, "TOGGLE WIREFRAME"},
+        LauncherButton{AppMode::MeshSlicePrototype, "CYCLE BACKGROUND"}};
+    int meshPressedButton = -1;
+    SDL_FingerID meshPressedTouchId = 0;
+    bool meshShowGrid = true;
+    bool meshShowWireframe = false;
+    int meshBackgroundPreset = 0;
+    cotrx::SimulationState blankRenderState{};
 
     void RefreshLauncherLayout()
     {
@@ -194,11 +204,42 @@ struct App
         }
     }
 
+    void RefreshMeshLayout()
+    {
+        constexpr float buttonWidth = 320.0f;
+        constexpr float buttonHeight = 50.0f;
+        constexpr float buttonGap = 14.0f;
+        const auto startX = (static_cast<float>(windowWidth) - buttonWidth) * 0.5f;
+        const auto startY = (static_cast<float>(windowHeight) * 0.5f) - ((buttonHeight * 1.5f) + buttonGap);
+
+        for (std::size_t index = 0; index < meshButtons.size(); ++index)
+        {
+            auto& button = meshButtons[index];
+            button.x = startX;
+            button.y = startY + static_cast<float>(index) * (buttonHeight + buttonGap);
+            button.width = buttonWidth;
+            button.height = buttonHeight;
+        }
+    }
+
     [[nodiscard]] int HitTestLauncherButton(float x, float y) const
     {
         for (std::size_t index = 0; index < launcherButtons.size(); ++index)
         {
             if (launcherButtons[index].Contains(x, y))
+            {
+                return static_cast<int>(index);
+            }
+        }
+
+        return -1;
+    }
+
+    [[nodiscard]] int HitTestMeshButton(float x, float y) const
+    {
+        for (std::size_t index = 0; index < meshButtons.size(); ++index)
+        {
+            if (meshButtons[index].Contains(x, y))
             {
                 return static_cast<int>(index);
             }
@@ -231,6 +272,84 @@ struct App
         launcherPressedTouchId = 0;
     }
 
+    void SetMeshHover(float x, float y)
+    {
+        const auto hoveredIndex = HitTestMeshButton(x, y);
+        for (std::size_t index = 0; index < meshButtons.size(); ++index)
+        {
+            meshButtons[index].hovered = static_cast<int>(index) == hoveredIndex;
+        }
+    }
+
+    void SetMeshPressed(int pressedButton)
+    {
+        meshPressedButton = pressedButton;
+        for (std::size_t index = 0; index < meshButtons.size(); ++index)
+        {
+            meshButtons[index].pressed = static_cast<int>(index) == pressedButton;
+        }
+    }
+
+    void ClearMeshPointerState()
+    {
+        SetMeshPressed(-1);
+        meshPressedTouchId = 0;
+    }
+
+    void ApplyMeshButtonAction(int buttonIndex)
+    {
+        if (buttonIndex == 0)
+        {
+            meshShowGrid = !meshShowGrid;
+        }
+        else if (buttonIndex == 1)
+        {
+            meshShowWireframe = !meshShowWireframe;
+        }
+        else if (buttonIndex == 2)
+        {
+            meshBackgroundPreset = (meshBackgroundPreset + 1) % 3;
+        }
+    }
+
+    [[nodiscard]] const cotrx::SimulationState& RenderStateForCurrentMode() const
+    {
+        if (currentMode == AppMode::CookieOnTheRoofX)
+        {
+            return simulation.State();
+        }
+        return blankRenderState;
+    }
+
+    [[nodiscard]] cotrx::Color ClearColorForCurrentMode() const
+    {
+        if (currentMode == AppMode::Launcher)
+        {
+            return {0.08f, 0.09f, 0.11f, 1.0f};
+        }
+
+        if (currentMode == AppMode::MeshSlicePrototype)
+        {
+            switch (meshBackgroundPreset)
+            {
+            case 1:
+                return {0.10f, 0.13f, 0.18f, 1.0f};
+            case 2:
+                return {0.14f, 0.10f, 0.16f, 1.0f};
+            default:
+                return {0.09f, 0.10f, 0.12f, 1.0f};
+            }
+        }
+
+        return config.clearColor;
+    }
+
+    void RebuildSceneForCurrentMode()
+    {
+        renderer.RebuildScene(RenderStateForCurrentMode());
+        lastSceneRevision = simulation.SceneRevision();
+    }
+
     void SetMode(AppMode mode)
     {
         currentMode = mode;
@@ -243,6 +362,8 @@ struct App
         touches = {};
         simulation.SetPressedAction(cotrx::UiAction::None);
         ClearLauncherPointerState();
+        ClearMeshPointerState();
+        RebuildSceneForCurrentMode();
     }
 
     [[nodiscard]] cotrx::UiOverlayState BuildUiStateForCurrentMode() const
@@ -276,12 +397,30 @@ struct App
 
         if (currentMode == AppMode::MeshSlicePrototype)
         {
+            meshButtons[0].label = std::string("GRID: ") + (meshShowGrid ? "ON" : "OFF");
+            meshButtons[1].label = std::string("WIREFRAME: ") + (meshShowWireframe ? "ON" : "OFF");
+            meshButtons[2].label = std::string("BACKGROUND: ") + std::to_string(meshBackgroundPreset + 1);
             uiState.hudLines = {
                 "MESH SLICE PROTOTYPE",
-                "PLACEHOLDER VIEW ACTIVE",
-                "BUTTON WORKFLOW READY",
+                std::string("GRID ") + (meshShowGrid ? "ON" : "OFF"),
+                std::string("WIREFRAME ") + (meshShowWireframe ? "ON" : "OFF"),
+                "MANUAL VISUAL CHECK READY",
                 "PRESS ESC TO RETURN"};
             uiState.footer = "MESH SLICE PROTOTYPE";
+
+            uiState.buttons.reserve(meshButtons.size());
+            for (const auto& button : meshButtons)
+            {
+                cotrx::ButtonState uiButton{};
+                uiButton.label = button.label;
+                uiButton.x = button.x;
+                uiButton.y = button.y;
+                uiButton.width = button.width;
+                uiButton.height = button.height;
+                uiButton.hovered = button.hovered;
+                uiButton.pressed = button.pressed;
+                uiState.buttons.push_back(uiButton);
+            }
             return uiState;
         }
 
@@ -362,8 +501,14 @@ struct App
 
         RefreshViewportSize();
         RefreshLauncherLayout();
-        renderer.RebuildScene(simulation.State());
-        lastSceneRevision = simulation.SceneRevision();
+        RefreshMeshLayout();
+        blankRenderState = simulation.State();
+        blankRenderState.meshes.clear();
+        blankRenderState.sceneObjects.clear();
+        blankRenderState.buttons.clear();
+        blankRenderState.hudLines.clear();
+        blankRenderState.versionLabel = simulation.State().versionLabel;
+        RebuildSceneForCurrentMode();
         running = true;
         return true;
     }
@@ -388,7 +533,7 @@ struct App
         }
 
         const auto uiState = BuildUiStateForCurrentMode();
-        renderer.Render(simulation.State(), uiState, config.clearColor, windowWidth, windowHeight, drawableWidth, drawableHeight);
+        renderer.Render(RenderStateForCurrentMode(), uiState, ClearColorForCurrentMode(), windowWidth, windowHeight, drawableWidth, drawableHeight);
         SDL_GL_SwapWindow(window);
         return running;
     }
@@ -433,6 +578,7 @@ struct App
         SDL_GL_GetDrawableSize(window, &drawableWidth, &drawableHeight);
         simulation.SetViewportSize(windowWidth, windowHeight);
         RefreshLauncherLayout();
+        RefreshMeshLayout();
     }
 
     void HandleEvent(const SDL_Event& event)
@@ -466,6 +612,11 @@ struct App
                 SetLauncherHover(x, y);
                 break;
             }
+            if (currentMode == AppMode::MeshSlicePrototype)
+            {
+                SetMeshHover(x, y);
+                break;
+            }
             simulation.UpdateHover(x, y);
             if (mouseOrbiting)
             {
@@ -484,6 +635,11 @@ struct App
                 if (currentMode == AppMode::Launcher)
                 {
                     SetLauncherPressed(HitTestLauncherButton(lastMouseX, lastMouseY));
+                    break;
+                }
+                if (currentMode == AppMode::MeshSlicePrototype)
+                {
+                    SetMeshPressed(HitTestMeshButton(lastMouseX, lastMouseY));
                     break;
                 }
                 mousePressedAction = simulation.HitTestButton(lastMouseX, lastMouseY);
@@ -506,6 +662,17 @@ struct App
                     }
                     ClearLauncherPointerState();
                     SetLauncherHover(releaseX, releaseY);
+                    break;
+                }
+                if (currentMode == AppMode::MeshSlicePrototype)
+                {
+                    const auto releasedButton = HitTestMeshButton(releaseX, releaseY);
+                    if (meshPressedButton >= 0 && meshPressedButton == releasedButton)
+                    {
+                        ApplyMeshButtonAction(meshPressedButton);
+                    }
+                    ClearMeshPointerState();
+                    SetMeshHover(releaseX, releaseY);
                     break;
                 }
                 if (mousePressedAction != cotrx::UiAction::None && simulation.HitTestButton(releaseX, releaseY) == mousePressedAction)
@@ -543,6 +710,14 @@ struct App
                 SetLauncherPressed(pressedButton);
                 launcherPressedTouchId = pressedButton >= 0 ? event.tfinger.fingerId : 0;
                 SetLauncherHover(touch->x, touch->y);
+                break;
+            }
+            if (currentMode == AppMode::MeshSlicePrototype)
+            {
+                const auto pressedButton = HitTestMeshButton(touch->x, touch->y);
+                SetMeshPressed(pressedButton);
+                meshPressedTouchId = pressedButton >= 0 ? event.tfinger.fingerId : 0;
+                SetMeshHover(touch->x, touch->y);
                 break;
             }
             const auto activeCount = CountActiveTouches(touches);
@@ -589,6 +764,15 @@ struct App
                 }
                 break;
             }
+            if (currentMode == AppMode::MeshSlicePrototype)
+            {
+                SetMeshHover(touch->x, touch->y);
+                if (meshPressedTouchId == event.tfinger.fingerId)
+                {
+                    SetMeshPressed(HitTestMeshButton(touch->x, touch->y));
+                }
+                break;
+            }
             const auto activeCount = CountActiveTouches(touches);
 
             if (activeCount >= 2)
@@ -624,6 +808,21 @@ struct App
                     ClearLauncherPointerState();
                 }
                 SetLauncherHover(releaseX, releaseY);
+                ReleaseTouch(touches, event.tfinger.fingerId);
+                break;
+            }
+            if (currentMode == AppMode::MeshSlicePrototype)
+            {
+                const auto releasedButton = HitTestMeshButton(releaseX, releaseY);
+                if (meshPressedTouchId == event.tfinger.fingerId && meshPressedButton >= 0 && meshPressedButton == releasedButton)
+                {
+                    ApplyMeshButtonAction(meshPressedButton);
+                }
+                if (meshPressedTouchId == event.tfinger.fingerId)
+                {
+                    ClearMeshPointerState();
+                }
+                SetMeshHover(releaseX, releaseY);
                 ReleaseTouch(touches, event.tfinger.fingerId);
                 break;
             }
