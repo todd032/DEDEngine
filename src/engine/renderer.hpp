@@ -16,6 +16,7 @@ public:
     bool Initialize(bool glesContext);
     void Shutdown();
     void RebuildScene(const SimulationState& state);
+    void SetWireframeEnabled(bool enabled);
     void Render(const SimulationState& state, const Color& clearColor, int uiWidth, int uiHeight, int drawableWidth, int drawableHeight);
     void Render(
         const SimulationState& state,
@@ -64,6 +65,7 @@ private:
     GLuint uiVao_ = 0;
     GLuint uiVbo_ = 0;
     bool glesContext_ = false;
+    bool wireframeEnabled_ = false;
     std::vector<GpuMesh> sceneMeshes_;
 };
 } // namespace cotrx

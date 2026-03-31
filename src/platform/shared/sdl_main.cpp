@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
@@ -43,6 +44,89 @@ AppMode ParseInitialMode(int argc, char* argv[])
     }
 
     return AppMode::Launcher;
+}
+
+cotrx::MeshData CreateMeshSlicePreviewMesh()
+{
+    cotrx::MeshData mesh{};
+    const std::array<cotrx::Vec3, 8> corners{
+        cotrx::Vec3{-2.2f, 0.0f, -1.8f},
+        cotrx::Vec3{2.2f, 0.0f, -1.8f},
+        cotrx::Vec3{2.2f, 0.0f, 1.8f},
+        cotrx::Vec3{-2.2f, 0.0f, 1.8f},
+        cotrx::Vec3{-1.2f, 2.2f, -0.8f},
+        cotrx::Vec3{1.2f, 2.2f, -0.8f},
+        cotrx::Vec3{1.2f, 2.2f, 0.8f},
+        cotrx::Vec3{-1.2f, 2.2f, 0.8f}};
+
+    const cotrx::Color color{0.78f, 0.82f, 0.88f, 1.0f};
+    const auto pushFace = [&](std::uint32_t a, std::uint32_t b, std::uint32_t c, std::uint32_t d, const cotrx::Vec3& normal) {
+        const auto base = static_cast<std::uint32_t>(mesh.vertices.size());
+        mesh.vertices.push_back({corners[a], normal, color});
+        mesh.vertices.push_back({corners[b], normal, color});
+        mesh.vertices.push_back({corners[c], normal, color});
+        mesh.vertices.push_back({corners[d], normal, color});
+        mesh.indices.insert(mesh.indices.end(), {base, base + 1, base + 2, base, base + 2, base + 3});
+        cotrx::ExpandBounds(mesh.bounds, corners[a]);
+        cotrx::ExpandBounds(mesh.bounds, corners[b]);
+        cotrx::ExpandBounds(mesh.bounds, corners[c]);
+        cotrx::ExpandBounds(mesh.bounds, corners[d]);
+    };
+
+    pushFace(0, 1, 2, 3, {0.0f, -1.0f, 0.0f});
+    pushFace(4, 7, 6, 5, {0.0f, 1.0f, 0.0f});
+    pushFace(0, 4, 5, 1, {0.0f, 0.35f, -1.0f});
+    pushFace(1, 5, 6, 2, {1.0f, 0.35f, 0.0f});
+    pushFace(2, 6, 7, 3, {0.0f, 0.35f, 1.0f});
+    pushFace(3, 7, 4, 0, {-1.0f, 0.35f, 0.0f});
+    return mesh;
+}
+
+cotrx::MeshData CreateGridPlaneMesh()
+{
+    cotrx::MeshData mesh{};
+    constexpr int halfLines = 14;
+    constexpr float span = 14.0f;
+    constexpr float cellSize = span / static_cast<float>(halfLines * 2);
+    constexpr float lineHalfWidth = 0.015f;
+    constexpr float y = -0.02f;
+
+    const auto appendQuad = [&](const cotrx::Vec3& a, const cotrx::Vec3& b, const cotrx::Vec3& c, const cotrx::Vec3& d, const cotrx::Color& color) {
+        const auto base = static_cast<std::uint32_t>(mesh.vertices.size());
+        constexpr cotrx::Vec3 up{0.0f, 1.0f, 0.0f};
+        mesh.vertices.push_back({a, up, color});
+        mesh.vertices.push_back({b, up, color});
+        mesh.vertices.push_back({c, up, color});
+        mesh.vertices.push_back({d, up, color});
+        mesh.indices.insert(mesh.indices.end(), {base, base + 1, base + 2, base, base + 2, base + 3});
+        cotrx::ExpandBounds(mesh.bounds, a);
+        cotrx::ExpandBounds(mesh.bounds, b);
+        cotrx::ExpandBounds(mesh.bounds, c);
+        cotrx::ExpandBounds(mesh.bounds, d);
+    };
+
+    for (int line = -halfLines; line <= halfLines; ++line)
+    {
+        const auto offset = static_cast<float>(line) * cellSize;
+        const auto major = (line == 0) || (line % 5 == 0);
+        const cotrx::Color color = major ? cotrx::Color{0.38f, 0.48f, 0.60f, 1.0f} : cotrx::Color{0.26f, 0.34f, 0.44f, 1.0f};
+
+        appendQuad(
+            {-span, y, offset - lineHalfWidth},
+            {span, y, offset - lineHalfWidth},
+            {span, y, offset + lineHalfWidth},
+            {-span, y, offset + lineHalfWidth},
+            color);
+
+        appendQuad(
+            {offset - lineHalfWidth, y, -span},
+            {offset + lineHalfWidth, y, -span},
+            {offset + lineHalfWidth, y, span},
+            {offset - lineHalfWidth, y, span},
+            color);
+    }
+
+    return mesh;
 }
 
 struct TouchPoint
@@ -208,6 +292,31 @@ struct App
     int meshBackgroundPreset = 0;
     cotrx::SimulationState blankRenderState{};
 
+    void RefreshMeshPrototypeState()
+    {
+        // Mesh Slice mode intentionally owns a separate scene so Cookie prototype assets cannot leak through.
+        blankRenderState = {};
+        blankRenderState.camera = simulation.State().camera;
+        blankRenderState.camera.target = {0.0f, 1.2f, 0.0f};
+        blankRenderState.camera.distance = 17.0f;
+        blankRenderState.camera.minDistance = 8.0f;
+        blankRenderState.camera.maxDistance = 32.0f;
+        blankRenderState.versionLabel = simulation.State().versionLabel;
+        blankRenderState.meshes.push_back(CreateMeshSlicePreviewMesh());
+        blankRenderState.sceneObjects.push_back({0, {}, {1.0f, 1.0f, 1.0f, 1.0f}});
+
+        if (meshShowGrid)
+        {
+            blankRenderState.meshes.push_back(CreateGridPlaneMesh());
+            blankRenderState.sceneObjects.push_back({blankRenderState.meshes.size() - 1, {}, {1.0f, 1.0f, 1.0f, 1.0f}});
+        }
+    }
+
+    void SyncRendererForCurrentMode()
+    {
+        renderer.SetWireframeEnabled(currentMode == AppMode::MeshSlicePrototype && meshShowWireframe);
+    }
+
     void RefreshLauncherLayout()
     {
         constexpr float buttonWidth = 340.0f;
@@ -323,10 +432,13 @@ struct App
         if (buttonIndex == 0)
         {
             meshShowGrid = !meshShowGrid;
+            RefreshMeshPrototypeState();
+            RebuildSceneForCurrentMode();
         }
         else if (buttonIndex == 1)
         {
             meshShowWireframe = !meshShowWireframe;
+            SyncRendererForCurrentMode();
         }
         else if (buttonIndex == 2)
         {
@@ -355,11 +467,11 @@ struct App
             switch (meshBackgroundPreset)
             {
             case 1:
-                return {0.10f, 0.13f, 0.18f, 1.0f};
+                return {0.04f, 0.12f, 0.24f, 1.0f};
             case 2:
-                return {0.14f, 0.10f, 0.16f, 1.0f};
+                return {0.25f, 0.10f, 0.12f, 1.0f};
             default:
-                return {0.09f, 0.10f, 0.12f, 1.0f};
+                return {0.05f, 0.05f, 0.06f, 1.0f};
             }
         }
 
@@ -368,6 +480,10 @@ struct App
 
     void RebuildSceneForCurrentMode()
     {
+        if (currentMode == AppMode::MeshSlicePrototype)
+        {
+            RefreshMeshPrototypeState();
+        }
         renderer.RebuildScene(RenderStateForCurrentMode());
         lastSceneRevision = simulation.SceneRevision();
     }
@@ -385,6 +501,15 @@ struct App
         simulation.SetPressedAction(cotrx::UiAction::None);
         ClearLauncherPointerState();
         ClearMeshPointerState();
+        if (currentMode == AppMode::MeshSlicePrototype)
+        {
+            RefreshMeshPrototypeState();
+        }
+        else
+        {
+            blankRenderState = {};
+        }
+        SyncRendererForCurrentMode();
         RebuildSceneForCurrentMode();
     }
 
@@ -426,6 +551,7 @@ struct App
                 "MESH SLICE PROTOTYPE",
                 std::string("GRID ") + (meshShowGrid ? "ON" : "OFF"),
                 std::string("WIREFRAME ") + (meshShowWireframe ? "ON" : "OFF"),
+                std::string("BACKGROUND ") + std::to_string(meshBackgroundPreset + 1),
                 "MANUAL VISUAL CHECK READY",
                 "PRESS ESC TO RETURN"};
             uiState.footer = "MESH SLICE PROTOTYPE";
@@ -524,12 +650,8 @@ struct App
         RefreshViewportSize();
         RefreshLauncherLayout();
         RefreshMeshLayout();
-        blankRenderState = simulation.State();
-        blankRenderState.meshes.clear();
-        blankRenderState.sceneObjects.clear();
-        blankRenderState.buttons.clear();
-        blankRenderState.hudLines.clear();
-        blankRenderState.versionLabel = simulation.State().versionLabel;
+        RefreshMeshPrototypeState();
+        SyncRendererForCurrentMode();
         RebuildSceneForCurrentMode();
         running = true;
         return true;

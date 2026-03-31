@@ -195,6 +195,11 @@ void Renderer::RebuildScene(const SimulationState& state)
     }
 }
 
+void Renderer::SetWireframeEnabled(bool enabled)
+{
+    wireframeEnabled_ = enabled;
+}
+
 void Renderer::Render(const SimulationState& state, const Color& clearColor, int uiWidth, int uiHeight, int drawableWidth, int drawableHeight)
 {
     UiOverlayState uiState{};
@@ -228,6 +233,13 @@ void Renderer::Render(
     gl::UniformMatrix4fv(sceneViewProjectionLocation_, 1, GL_FALSE, viewProjection.m.data());
     gl::Uniform3f(sceneLightLocation_, -0.45f, 1.0f, -0.28f);
 
+#if !defined(__ANDROID__) && !defined(__EMSCRIPTEN__)
+    if (wireframeEnabled_ && !glesContext_)
+    {
+        glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+    }
+#endif
+
     for (const auto& object : state.sceneObjects)
     {
         if (object.meshIndex >= sceneMeshes_.size())
@@ -241,7 +253,22 @@ void Renderer::Render(
         gl::Uniform4f(sceneTintLocation_, object.tint.r, object.tint.g, object.tint.b, object.tint.a);
         gl::BindVertexArray(gpuMesh.vao);
         glDrawElements(GL_TRIANGLES, gpuMesh.indexCount, GL_UNSIGNED_INT, nullptr);
+
+        if (wireframeEnabled_ && glesContext_)
+        {
+            // GLES/WebGL has no polygon mode; draw a line overlay pass so the toggle is still visible.
+            gl::Uniform4f(sceneTintLocation_, 0.05f, 0.95f, 0.95f, 1.0f);
+            glDrawElements(GL_LINES, gpuMesh.indexCount, GL_UNSIGNED_INT, nullptr);
+            gl::Uniform4f(sceneTintLocation_, object.tint.r, object.tint.g, object.tint.b, object.tint.a);
+        }
     }
+
+#if !defined(__ANDROID__) && !defined(__EMSCRIPTEN__)
+    if (!glesContext_)
+    {
+        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+    }
+#endif
 
     std::vector<UiVertex> uiVertices;
     BuildUiVertices(uiState, uiWidth, uiHeight, uiVertices);
