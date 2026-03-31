@@ -46,17 +46,12 @@ if(NOT EMSCRIPTEN)
         SDL2main)
 endif()
 
-set(COTRX_COMMON_SOURCES
+set(COTRX_CORE_SOURCES
     src/engine/types.hpp
     src/engine/geometry.hpp
     src/engine/geometry.cpp
-    src/engine/gl_api.hpp
-    src/engine/gl_api.cpp
-    src/engine/renderer.hpp
-    src/engine/renderer.cpp
     src/game/simulation.hpp
     src/game/simulation.cpp
-    src/platform/shared/platform_config.hpp
     src/core/surface_types.hpp
     src/core/surface_types.cpp
     src/core/mesh_types.hpp
@@ -78,16 +73,10 @@ set(COTRX_COMMON_SOURCES
     src/core/procedural_cube_generator.hpp
     src/core/procedural_cube_generator.cpp
     src/validation/scenario_runner.hpp
-    src/validation/scenario_runner.cpp
-    src/viewer/main.hpp
-    src/viewer/main.cpp
-    src/viewer/debug_draw.hpp
-    src/viewer/debug_draw.cpp
-    src/viewer/imgui_panels.hpp
-    src/viewer/imgui_panels.cpp)
+    src/validation/scenario_runner.cpp)
 
 add_library(cotrx_core STATIC
-    ${COTRX_COMMON_SOURCES})
+    ${COTRX_CORE_SOURCES})
 
 target_include_directories(cotrx_core
     PUBLIC
@@ -98,13 +87,31 @@ target_compile_definitions(cotrx_core
         $<$<PLATFORM_ID:Windows>:NOMINMAX>
         $<$<PLATFORM_ID:Windows>:WIN32_LEAN_AND_MEAN>)
 
+set(COTRX_VIEWER_SOURCES
+    src/viewer/main.hpp
+    src/viewer/main.cpp
+    src/viewer/debug_draw.hpp
+    src/viewer/debug_draw.cpp
+    src/viewer/imgui_panels.hpp
+    src/viewer/imgui_panels.cpp)
+
+set(COTRX_RUNTIME_SOURCES
+    src/engine/gl_api.hpp
+    src/engine/gl_api.cpp
+    src/engine/renderer.hpp
+    src/engine/renderer.cpp)
+
 if(EMSCRIPTEN)
-    target_compile_options(cotrx_core PUBLIC "SHELL:-sUSE_SDL=2")
-    target_link_options(cotrx_core INTERFACE "SHELL:-sUSE_SDL=2")
+    add_library(cotrx_runtime STATIC ${COTRX_RUNTIME_SOURCES})
+    target_compile_options(cotrx_runtime PUBLIC "SHELL:-sUSE_SDL=2")
+    target_link_options(cotrx_runtime INTERFACE "SHELL:-sUSE_SDL=2")
+    target_link_libraries(cotrx_runtime PUBLIC cotrx_core)
 elseif(WIN32)
-    target_link_libraries(cotrx_core PUBLIC ${COTRX_SDL_TARGET} opengl32)
+    add_library(cotrx_runtime STATIC ${COTRX_RUNTIME_SOURCES})
+    target_link_libraries(cotrx_runtime PUBLIC cotrx_core ${COTRX_SDL_TARGET} opengl32)
 elseif(ANDROID)
-    target_link_libraries(cotrx_core PUBLIC ${COTRX_SDL_TARGET} log android EGL GLESv3)
+    add_library(cotrx_runtime STATIC ${COTRX_RUNTIME_SOURCES})
+    target_link_libraries(cotrx_runtime PUBLIC cotrx_core ${COTRX_SDL_TARGET} log android EGL GLESv3)
 endif()
 
 if(EMSCRIPTEN)
@@ -116,9 +123,12 @@ elseif(WIN32)
 elseif(ANDROID)
     add_library(cotrx_platform STATIC
         src/platform/android/platform_config.cpp)
+else()
+    add_library(cotrx_platform STATIC
+        src/platform/windows/platform_config.cpp)
 endif()
 
-target_link_libraries(cotrx_platform PUBLIC cotrx_core)
+target_link_libraries(cotrx_platform PUBLIC cotrx_runtime)
 
 set(COTRX_ENTRY_SOURCE src/platform/shared/sdl_main.cpp)
 
@@ -147,10 +157,51 @@ elseif(EMSCRIPTEN)
         "SHELL:-sFULL_ES3=1"
         "SHELL:-sENVIRONMENT=web"
         "SHELL:--shell-file ${COTRX_WEB_SHELL}")
-else()
+elseif(WIN32)
     add_executable(CookieOnTheRoofX WIN32 ${COTRX_ENTRY_SOURCE})
     set_target_properties(CookieOnTheRoofX PROPERTIES OUTPUT_NAME "Cookie On The Roof X")
     target_link_libraries(CookieOnTheRoofX PRIVATE cotrx_platform ${COTRX_SDL_MAIN_TARGET})
+else()
+    add_executable(CookieOnTheRoofX ${COTRX_ENTRY_SOURCE})
+    set_target_properties(CookieOnTheRoofX PROPERTIES OUTPUT_NAME "CookieOnTheRoofX")
+    target_link_libraries(CookieOnTheRoofX PRIVATE cotrx_platform ${COTRX_SDL_MAIN_TARGET})
+endif()
+
+if(NOT ANDROID AND NOT EMSCRIPTEN)
+    add_executable(viewer
+        src/viewer/viewer_main.cpp
+        ${COTRX_VIEWER_SOURCES})
+    target_link_libraries(viewer PRIVATE cotrx_core)
+
+    find_package(glfw3 QUIET)
+    if(TARGET glfw)
+        target_link_libraries(viewer PRIVATE glfw)
+    elseif(TARGET glfw3::glfw)
+        target_link_libraries(viewer PRIVATE glfw3::glfw)
+    endif()
+
+    find_package(glad QUIET)
+    if(TARGET glad::glad)
+        target_link_libraries(viewer PRIVATE glad::glad)
+    elseif(TARGET glad)
+        target_link_libraries(viewer PRIVATE glad)
+    endif()
+
+    find_package(glm QUIET)
+    if(TARGET glm::glm)
+        target_link_libraries(viewer PRIVATE glm::glm)
+    endif()
+
+    find_package(imgui QUIET)
+    if(TARGET imgui::imgui)
+        target_link_libraries(viewer PRIVATE imgui::imgui)
+    elseif(TARGET imgui)
+        target_link_libraries(viewer PRIVATE imgui)
+    endif()
+
+    add_executable(validation_runner
+        src/validation/validation_runner_main.cpp)
+    target_link_libraries(validation_runner PRIVATE cotrx_core)
 endif()
 
 if(COTRX_BUILD_TESTS AND NOT ANDROID AND NOT EMSCRIPTEN)
