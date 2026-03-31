@@ -256,25 +256,6 @@ float AreaForSurfaceType(
     return it->second.area;
 }
 
-bool HasPositiveAreaForBoundary(
-    const std::unordered_map<core::SurfaceType, SurfaceStats>& surfaceStats,
-    const bool wantSkinBoundary)
-{
-    auto area = 0.0f;
-    for (const auto& [surfaceType, stat] : surfaceStats)
-    {
-        const auto matches = wantSkinBoundary
-            ? core::IsSkinBoundary(surfaceType)
-            : core::IsMeatBoundary(surfaceType);
-        if (matches)
-        {
-            area += stat.area;
-        }
-    }
-
-    return area > kAreaEpsilon;
-}
-
 std::string SurfaceStatsJson(const std::unordered_map<core::SurfaceType, SurfaceStats>& surfaceStats, const int indent)
 {
     std::ostringstream output;
@@ -451,25 +432,40 @@ CutPlaneScenarioInput BuildCutPlaneScenario(
 {
     const auto halfExtentX = std::max(generatorConfig.outerHalfExtent.x, 1.0e-4f);
     const auto insetHalfExtentX = std::max(halfExtentX - generatorConfig.skinThickness, 1.0e-4f);
+    const auto shallowCutX = generatorConfig.center.x + ((halfExtentX + insetHalfExtentX) * 0.5f);
+    const auto progressiveX0 = generatorConfig.center.x + (halfExtentX * 0.60f);
+    const auto progressiveX1 = generatorConfig.center.x + (halfExtentX * 0.72f);
+    const auto progressiveX2 = generatorConfig.center.x + (halfExtentX * 0.82f);
+    const auto progressiveX3 = generatorConfig.center.x + (halfExtentX * 0.90f);
 
     switch (preset)
     {
-    case CutPlanePreset::ExactHalfCut:
+    case CutPlanePreset::InitialVisibility:
+        return {"InitialVisibility", {}};
+    case CutPlanePreset::VerticalHalfCut:
         return {
-            "ExactHalfCut",
+            "VerticalHalfCut",
             {{{1.0f, 0.0f, 0.0f}, -generatorConfig.center.x}}};
-    case CutPlanePreset::ShallowCut:
+    case CutPlanePreset::VerticalThenHorizontalCut:
         return {
-            "ShallowCut",
-            {{{1.0f, 0.0f, 0.0f}, -(generatorConfig.center.x + ((halfExtentX + insetHalfExtentX) * 0.5f))}}};
-    case CutPlanePreset::RepeatedTrimming:
-        return {
-            "RepeatedTrimming",
+            "VerticalThenHorizontalCut",
             {
                 {{1.0f, 0.0f, 0.0f}, -generatorConfig.center.x},
-                {{0.0f, 1.0f, 0.0f}, -(generatorConfig.center.y + (halfExtentX * 0.2f))},
-                {{0.0f, 0.0f, 1.0f}, -(generatorConfig.center.z - (halfExtentX * 0.15f))},
+                {{0.0f, 1.0f, 0.0f}, -generatorConfig.center.y},
             }};
+    case CutPlanePreset::ProgressiveSkinRemoval:
+        return {
+            "ProgressiveSkinRemoval",
+            {
+                {{1.0f, 0.0f, 0.0f}, -progressiveX0},
+                {{1.0f, 0.0f, 0.0f}, -progressiveX1},
+                {{1.0f, 0.0f, 0.0f}, -progressiveX2},
+                {{1.0f, 0.0f, 0.0f}, -progressiveX3},
+            }};
+    case CutPlanePreset::ShallowCutNoMeatExposure:
+        return {
+            "ShallowCutNoMeatExposure",
+            {{{1.0f, 0.0f, 0.0f}, -shallowCutX}}};
     }
 
     return {};
@@ -477,13 +473,13 @@ CutPlaneScenarioInput BuildCutPlaneScenario(
 
 ScenarioCheckResult RunScenarioChecks(const ScenarioCheckInput& input)
 {
-    if (input.preset == CutPlanePreset::ShallowCut && !input.innerShellIntersected)
+    if (input.preset == CutPlanePreset::ShallowCutNoMeatExposure && !input.innerShellIntersected)
     {
         if (std::abs(input.cutCapArea) > kAreaEpsilon)
         {
             return {
                 false,
-                "ShallowCut without inner-shell intersection must keep CutCap area at zero."};
+                "ShallowCutNoMeatExposure without inner-shell intersection must keep CutCap area at zero."};
         }
     }
 
@@ -492,23 +488,22 @@ ScenarioCheckResult RunScenarioChecks(const ScenarioCheckInput& input)
 
 ScenarioExecutionResult RunScenarioA(const ScenarioExecutionOptions& options)
 {
-    const core::SliceEpsilon epsilon{};
     auto fragments = DefaultInitialFragments(options.generatorConfig);
-    const auto scenario = BuildCutPlaneScenario(CutPlanePreset::ExactHalfCut, options.generatorConfig);
-    fragments = ApplyPlaneCuts(fragments, scenario.planes.front(), epsilon);
-
     const auto aggregated = BuildAggregatedSurfaceStats(fragments);
+    const auto outerArea = AreaForSurfaceType(aggregated, core::SurfaceType::OuterSurface);
+    const auto cutSurfaceArea = AreaForSurfaceType(aggregated, core::SurfaceType::CutSurface);
     const auto cutCapArea = AreaForSurfaceType(aggregated, core::SurfaceType::CutCap);
 
     ScenarioData data{};
-    data.scenarioName = "Scenario A";
+    data.scenarioName = "Scenario A: InitialVisibility";
     data.scenarioDirName = "scenario_a";
     data.fragments = std::move(fragments);
     data.screenshotPath = options.screenshotPath;
     data.assertions.push_back(MakeAssertion(
-        "inner penetrating cut should produce CutCap area > 0",
-        cutCapArea > kAreaEpsilon,
-        "CutCap area=" + std::to_string(cutCapArea)));
+        "initial visibility exposes only OuterSurface on observable boundary",
+        (outerArea > kAreaEpsilon) && (cutSurfaceArea <= kAreaEpsilon) && (cutCapArea <= kAreaEpsilon),
+        "OuterSurface area=" + std::to_string(outerArea) + ", CutSurface area=" + std::to_string(cutSurfaceArea) +
+            ", CutCap area=" + std::to_string(cutCapArea)));
 
     return PersistScenarioArtifacts(data, options);
 }
@@ -517,51 +512,61 @@ ScenarioExecutionResult RunScenarioB(const ScenarioExecutionOptions& options)
 {
     const core::SliceEpsilon epsilon{};
     auto fragments = DefaultInitialFragments(options.generatorConfig);
-    const auto scenario = BuildCutPlaneScenario(CutPlanePreset::ShallowCut, options.generatorConfig);
+    const auto scenario = BuildCutPlaneScenario(CutPlanePreset::VerticalHalfCut, options.generatorConfig);
 
-    const bool innerShellIntersected = FragmentIntersectsPlane(fragments[1], scenario.planes.front(), epsilon);
     fragments = ApplyPlaneCuts(fragments, scenario.planes.front(), epsilon);
 
     const auto aggregated = BuildAggregatedSurfaceStats(fragments);
+    const auto cutSurfaceArea = AreaForSurfaceType(aggregated, core::SurfaceType::CutSurface);
     const auto cutCapArea = AreaForSurfaceType(aggregated, core::SurfaceType::CutCap);
-    const auto check = RunScenarioChecks({CutPlanePreset::ShallowCut, innerShellIntersected, cutCapArea});
 
     ScenarioData data{};
-    data.scenarioName = "Scenario B";
+    data.scenarioName = "Scenario B: VerticalHalfCut";
     data.scenarioDirName = "scenario_b";
     data.fragments = std::move(fragments);
     data.screenshotPath = options.screenshotPath;
     data.assertions.push_back(MakeAssertion(
-        "shallow cut should keep CutCap area == 0 when inner shell is not intersected",
-        check.passed,
-        "innerShellIntersected=" + std::string(innerShellIntersected ? "true" : "false") +
-            ", CutCap area=" + std::to_string(cutCapArea)));
+        "vertical half cut should produce both CutSurface(skin boundary) and CutCap(meat boundary)",
+        (cutSurfaceArea > kAreaEpsilon) && (cutCapArea > kAreaEpsilon),
+        "CutSurface area=" + std::to_string(cutSurfaceArea) + ", CutCap area=" + std::to_string(cutCapArea)));
 
     return PersistScenarioArtifacts(data, options);
 }
 
 ScenarioExecutionResult RunScenarioC(const ScenarioExecutionOptions& options)
 {
-    auto config = options.generatorConfig;
-    config.skinThickness = std::max(config.skinThickness, 0.15f);
-
     const core::SliceEpsilon epsilon{};
-    auto fragments = DefaultInitialFragments(config);
-    const auto exact = BuildCutPlaneScenario(CutPlanePreset::ExactHalfCut, config);
-    fragments = ApplyPlaneCuts(fragments, exact.planes.front(), epsilon);
+    auto fragments = DefaultInitialFragments(options.generatorConfig);
+    const auto scenario = BuildCutPlaneScenario(CutPlanePreset::VerticalThenHorizontalCut, options.generatorConfig);
+    for (const auto& plane : scenario.planes)
+    {
+        fragments = ApplyPlaneCuts(fragments, plane, epsilon);
+    }
 
-    const auto aggregated = BuildAggregatedSurfaceStats(fragments);
-    const auto cutCapArea = AreaForSurfaceType(aggregated, core::SurfaceType::CutCap);
+    const auto fragmentStats = BuildFragmentStats(fragments);
+    auto allBoundaryMixValid = true;
+    auto violatingCount = 0u;
+    for (const auto& stat : fragmentStats)
+    {
+        const auto cutSurfaceArea = AreaForSurfaceType(stat.surfaceStats, core::SurfaceType::CutSurface);
+        const auto cutCapArea = AreaForSurfaceType(stat.surfaceStats, core::SurfaceType::CutCap);
+        if ((cutSurfaceArea > kAreaEpsilon || cutCapArea > kAreaEpsilon) &&
+            ((cutSurfaceArea <= kAreaEpsilon) || (cutCapArea <= kAreaEpsilon)))
+        {
+            allBoundaryMixValid = false;
+            ++violatingCount;
+        }
+    }
 
     ScenarioData data{};
-    data.scenarioName = "Scenario C";
+    data.scenarioName = "Scenario C: VerticalThenHorizontalCut";
     data.scenarioDirName = "scenario_c";
     data.fragments = std::move(fragments);
     data.screenshotPath = options.screenshotPath;
     data.assertions.push_back(MakeAssertion(
-        "inner penetrating cut should produce CutCap area > 0",
-        cutCapArea > kAreaEpsilon,
-        "CutCap area=" + std::to_string(cutCapArea)));
+        "after second cut, each fragment that has cut boundary keeps both CutSurface and CutCap",
+        allBoundaryMixValid,
+        "violating fragments=" + std::to_string(violatingCount) + ", total fragments=" + std::to_string(fragmentStats.size())));
 
     return PersistScenarioArtifacts(data, options);
 }
@@ -570,30 +575,35 @@ ScenarioExecutionResult RunScenarioD(const ScenarioExecutionOptions& options)
 {
     const core::SliceEpsilon epsilon{};
     auto fragments = DefaultInitialFragments(options.generatorConfig);
-    const auto scenario = BuildCutPlaneScenario(CutPlanePreset::RepeatedTrimming, options.generatorConfig);
+    const auto scenario = BuildCutPlaneScenario(CutPlanePreset::ProgressiveSkinRemoval, options.generatorConfig);
 
     for (const auto& plane : scenario.planes)
     {
         fragments = ApplyPlaneCuts(fragments, plane, epsilon);
     }
 
-    const auto aggregated = BuildAggregatedSurfaceStats(fragments);
-    const auto hasSkinBoundaryArea = HasPositiveAreaForBoundary(aggregated, true);
-    const auto hasMeatBoundaryArea = HasPositiveAreaForBoundary(aggregated, false);
+    const auto fragmentStats = BuildFragmentStats(fragments);
+    bool sawSkinErasedRegion = false;
+    for (const auto& stat : fragmentStats)
+    {
+        const auto outerArea = AreaForSurfaceType(stat.surfaceStats, core::SurfaceType::OuterSurface);
+        const auto cutSurfaceArea = AreaForSurfaceType(stat.surfaceStats, core::SurfaceType::CutSurface);
+        if (outerArea <= kAreaEpsilon && cutSurfaceArea <= kAreaEpsilon)
+        {
+            sawSkinErasedRegion = true;
+            break;
+        }
+    }
 
     ScenarioData data{};
-    data.scenarioName = "Scenario D";
+    data.scenarioName = "Scenario D: ProgressiveSkinRemoval";
     data.scenarioDirName = "scenario_d";
     data.fragments = std::move(fragments);
     data.screenshotPath = options.screenshotPath;
     data.assertions.push_back(MakeAssertion(
-        "re-cut should preserve SkinBoundary area when geometry remains",
-        hasSkinBoundaryArea,
-        "SkinBoundary area>0=" + std::string(hasSkinBoundaryArea ? "true" : "false")));
-    data.assertions.push_back(MakeAssertion(
-        "re-cut should preserve MeatBoundary area when geometry remains",
-        hasMeatBoundaryArea,
-        "MeatBoundary area>0=" + std::string(hasMeatBoundaryArea ? "true" : "false")));
+        "progressive skin removal should converge to region with OuterSurface/CutSurface ~= 0",
+        sawSkinErasedRegion,
+        "skin-erased fragment present=" + std::string(sawSkinErasedRegion ? "true" : "false")));
 
     return PersistScenarioArtifacts(data, options);
 }
@@ -602,24 +612,35 @@ ScenarioExecutionResult RunScenarioE(const ScenarioExecutionOptions& options)
 {
     const core::SliceEpsilon epsilon{};
     auto fragments = DefaultInitialFragments(options.generatorConfig);
+    const auto scenario = BuildCutPlaneScenario(CutPlanePreset::ShallowCutNoMeatExposure, options.generatorConfig);
+    const bool innerShellIntersected = FragmentIntersectsPlane(fragments[1], scenario.planes.front(), epsilon);
+    fragments = ApplyPlaneCuts(fragments, scenario.planes.front(), epsilon);
 
-    const core::Plane missPlane{{1.0f, 0.0f, 0.0f}, -(options.generatorConfig.center.x + options.generatorConfig.outerHalfExtent.x + 5.0f)};
-    const auto beforeCount = fragments.size();
-    fragments = ApplyPlaneCuts(fragments, missPlane, epsilon);
+    const auto fragmentStats = BuildFragmentStats(fragments);
+    bool allFragmentsNoCutCap = true;
+    for (const auto& stat : fragmentStats)
+    {
+        if (AreaForSurfaceType(stat.surfaceStats, core::SurfaceType::CutCap) > kAreaEpsilon)
+        {
+            allFragmentsNoCutCap = false;
+            break;
+        }
+    }
+
+    const auto aggregated = BuildAggregatedSurfaceStats(fragments);
+    const auto cutCapArea = AreaForSurfaceType(aggregated, core::SurfaceType::CutCap);
+    const auto check = RunScenarioChecks({CutPlanePreset::ShallowCutNoMeatExposure, innerShellIntersected, cutCapArea});
 
     ScenarioData data{};
-    data.scenarioName = "Scenario E";
+    data.scenarioName = "Scenario E: ShallowCutNoMeatExposure";
     data.scenarioDirName = "scenario_e";
     data.fragments = std::move(fragments);
     data.screenshotPath = options.screenshotPath;
     data.assertions.push_back(MakeAssertion(
-        "failure-inducing input should be reported explicitly",
-        true,
-        "Plane misses geometry; cutSegments expected to be empty."));
-    data.assertions.push_back(MakeAssertion(
-        "missed cut should not change fragment count",
-        data.fragments.size() == beforeCount,
-        "before=" + std::to_string(beforeCount) + ", after=" + std::to_string(data.fragments.size())));
+        "shallow cut should keep CutCap == 0 for every fragment when inner shell is not intersected",
+        check.passed && allFragmentsNoCutCap,
+        "innerShellIntersected=" + std::string(innerShellIntersected ? "true" : "false") +
+            ", aggregated CutCap area=" + std::to_string(cutCapArea)));
 
     return PersistScenarioArtifacts(data, options);
 }
