@@ -299,7 +299,7 @@ struct EngineConfig
     int windowWidth = 1360;
     int windowHeight = 820;
     int targetFps = 60;
-    std::string title = "Cookie On The Roof X";
+    std::string title = "DEDEngine";
     Color clearColor{0.95f, 0.95f, 0.92f, 1.0f};
     bool preferGles = false;
     bool landscapeOnly = false;
